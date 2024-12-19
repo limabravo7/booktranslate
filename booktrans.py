@@ -1,4 +1,4 @@
-#v0.9: Flags: language settings (--from-lang DE --to-lang EN), processing --mode (--batch, --savebatch, --resume, --test), model selection (--model gpt-4o-mini), save temp files (--debug). Can resume expired or cancelled batch jobs. All jobs can be resumed in either fast or batch mode.
+#v0.9: Flags: language settings (--from-lang DE --to-lang EN), processing --mode (--batch, --resume, --test), model selection (--model gpt-4o-mini), save temp files (--debug). Can resume expired or cancelled batch jobs. All jobs can be resumed in either fast or batch mode.
 
 import argparse
 import re
@@ -8,15 +8,13 @@ from openai import OpenAI
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import shutil
+import sys
 import signal
 import time  # Add this import at the top with other imports
 
 # Add UTC constant
 UTC = timezone.utc
-
-# Define global variable for keeping temp files
-KEEP_TEMP = True  # Defaults to True; later change default to False
+DEBUG = False  # Global debug flag
 
 class BatchProcessingError(Exception):
     """Custom exception for batch processing errors"""
@@ -55,24 +53,28 @@ def chmod_recursive(path):
         print(f"Warning: Failed to change permissions for {path}: {e} [chmod_recursive]")
 
 def cleanup_files(client, file_ids, temp_dir=None, keep_temp=True, keep_batch_files=False):
-    """Clean up temporary files and directories with error handling"""
+    """Clean up temporary files and directories with error handling.
+    temp_dir: Path to the specific job directory to clean up
+    file_ids: List of OpenAI file IDs to delete
+    keep_temp: If True, preserve the job directory
+    """
     # First print the keep_temp status
-    print(f"Cleanup called with keep_temp={keep_temp} for {temp_dir} [cleanup_files]")
+    print(f"Cleanup called with keep_temp={keep_temp} for job dir: {temp_dir} [cleanup_files]")
     
     # Exit early if we should keep temp files
     if keep_temp:
-        print(f"Keeping temp directory: {temp_dir} [cleanup_files]")
+        print(f"Keeping job directory: {temp_dir} [cleanup_files]")
         return
 
     if not keep_temp and temp_dir and temp_dir.exists():
         try:
-            print(f"\nStarting cleanup of: {temp_dir} [cleanup_files]")
+            print(f"\nStarting cleanup of job directory: {temp_dir} [cleanup_files]")
             
             # Force permissions on the directory and its contents
             chmod_recursive(temp_dir)
             
-            # First, forcefully close and remove all files
-            for item in temp_dir.glob('**/*'):
+            # Remove all files in the job directory
+            for item in temp_dir.glob('*'):
                 if item.is_file():
                     try:
                         # Try to force close any open handles to the file
@@ -82,47 +84,17 @@ def cleanup_files(client, file_ids, temp_dir=None, keep_temp=True, keep_batch_fi
                             except:
                                 pass
                         
-                        if keep_batch_files and (item.name.startswith("batch_input") or 
-                                               item.name.startswith("batch_output")):
-                            continue
-                            
                         item.unlink(missing_ok=True)
                         print(f"Removed file: {item} [cleanup_files]")
                     except Exception as e:
                         print(f"Warning: Could not remove file {item}: {e} [cleanup_files]")
-                        try:
-                            # Last resort: use os.remove
-                            os.remove(item)
-                            print(f"Removed file using os.remove: {item} [cleanup_files]")
-                        except Exception as e2:
-                            print(f"Failed to remove file even with os.remove: {e2} [cleanup_files]")
-            
-            # Then remove all directories bottom-up
-            for item in sorted(temp_dir.glob('**/*'), reverse=True):
-                if item.is_dir():
-                    try:
-                        item.rmdir()
-                        print(f"Removed directory: {item} [cleanup_files]")
-                    except Exception as e:
-                        print(f"Warning: Could not remove directory {item}: {e} [cleanup_files]")
-                        try:
-                            # Last resort: use shutil.rmtree
-                            shutil.rmtree(item, ignore_errors=True)
-                            print(f"Removed directory using rmtree: {item} [cleanup_files]")
-                        except Exception as e2:
-                            print(f"Failed to remove directory even with rmtree: {e2} [cleanup_files]")
-            
-            # Finally try to remove the temp directory itself
+
+            # Finally try to remove the job directory itself
             try:
                 temp_dir.rmdir()
-                print(f"Removed temp directory: {temp_dir} [cleanup_files]")
+                print(f"Removed job directory: {temp_dir} [cleanup_files]")
             except Exception as e:
-                print(f"Could not remove temp directory {temp_dir}: {e} [cleanup_files]")
-                try:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    print(f"Removed temp directory using rmtree: {temp_dir} [cleanup_files]")
-                except Exception as e2:
-                    print(f"Failed to remove temp directory even with rmtree: {e2} [cleanup_files]")
+                print(f"Warning: Could not remove job directory {temp_dir}: {e} [cleanup_files]")
                 
         except Exception as e:
             print(f"Warning: Error during cleanup: {e} [cleanup_files]")
@@ -447,32 +419,22 @@ def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model=
                 }
             }
             f.write(json.dumps(request) + "\n")
-    
-    if mode == 'savebatch':
-        # Copy input file to batch directory
-        batch_dir = ensure_batch_dir()
-        batch_input_path = batch_dir / f"batch_input_{timestamp}.jsonl"
-        Path(batch_file_path).replace(batch_input_path)
-        print(f"Saved batch input file: {batch_input_path} [batch_translate_chunks]")
-        
-        # Save batch configuration
-        config_path = batch_dir / f"batch_config_{timestamp}.json"
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                'timestamp': timestamp,
-                'from_lang': from_lang,
-                'to_lang': to_lang,
-                'chunk_count': len(chunks)
-            }, f, indent=2)
-        print(f"Saved batch configuration: {config_path} [batch_translate_chunks]")
         
     # Process batch
     print("Uploading batch file... [batch_translate_chunks]")
     batch_file = client.files.create(
-        file=open(batch_file_path if mode != 'savebatch' else batch_input_path, "rb"),
+        file=open(batch_file_path, "rb"),
         purpose="batch"
     )
     input_file_id = batch_file.id
+    
+    # Delete batch input file after uploading, unless debug flag is set
+    if not DEBUG:
+        try:
+            batch_file_path.unlink()
+            print(f"Deleted batch input file: {batch_file_path} [batch_translate_chunks]")
+        except Exception as e:
+            print(f"Warning: Could not delete batch input file {batch_file_path}: {e} [batch_translate_chunks]")
     
     print(f"Creating batch job with file ID: {input_file_id} [batch_translate_chunks]")
     batch_job = client.batches.create(
@@ -483,17 +445,7 @@ def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model=
     
     batch_id = batch_job.id
     print(f"Batch job created with ID: {batch_id} [batch_translate_chunks]")
-    
-    if mode == 'savebatch':
-        # Save batch identifiers
-        ids_path = batch_dir / f"batch_ids_{timestamp}.json"
-        with open(ids_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                'batch_id': batch_id,
-                'input_file_id': input_file_id
-            }, f, indent=2)
-        print(f"Saved batch identifiers: {ids_path} [batch_translate_chunks]")
-    
+        
     print("\nBatch processing started. Checking initial status in 5 seconds... [batch_translate_chunks]")
     time.sleep(5)
     
@@ -797,14 +749,16 @@ def reassemble_translation(input_epub_path, output_epub_path, chapter_map, trans
 
     print(f"Processed {len(file_chunks)} files with translations [reassemble_translation]")
 
-def check_batch_status(client):
+def check_batch_status(client, debug=False):  # Add debug parameter
     """Check status of most recent batch job and return state if complete"""
     temp_dir = ensure_temp_dir()
-    state, state_file = load_batch_state(temp_dir)
+    state_data = load_batch_state(temp_dir)
     
-    if not state:
+    if not state_data:
         print("No batch state found. Run with --mode batch first. [check_batch_status]")
         return None, None, None
+    
+    state, state_file = state_data
     
     batch_id = state['batch_id']
     print(f"Checking status for batch {batch_id} [check_batch_status]")
@@ -814,15 +768,30 @@ def check_batch_status(client):
     print(f"Progress: {status.request_counts.completed}/{status.request_counts.total} [check_batch_status]")
     
     # Handle expired or cancelled batches with partial results
-    if status.status in ['expired', 'cancelled'] and status.request_counts.completed > 0:
-        print(f"\nBatch {status.status} but has {status.request_counts.completed} completed requests [check_batch_status]")
-        print("Attempting to save partial results... [check_batch_status]")
-        
-        translations = save_partial_batch_results(client, temp_dir, batch_id, state_file, status)
-        if translations:
-            print("\nPartial results saved successfully [check_batch_status]")
-            print("You can now use --mode resume to complete the remaining translations [check_batch_status]")
-            return None, None, None
+    if status.status in ['expired', 'cancelled', 'cancelling']:
+        if status.request_counts.completed > 0:
+            print(f"\nBatch {status.status} but has {status.request_counts.completed} completed requests [check_batch_status]")
+            print("Attempting to save partial results... [check_batch_status]")
+            
+            translations = save_partial_batch_results(client, temp_dir, batch_id, state_file, status)
+            if translations:
+                print("\nPartial results saved successfully [check_batch_status]")
+                print("You can now use --mode resume to complete the remaining translations [check_batch_status]")
+        else:
+            print(f"\nBatch {status.status} with 0 completed requests [check_batch_status]")
+            
+        # Only clean up batch state file if debug mode is not set
+        if not DEBUG:
+            try:
+                if state_file.exists():
+                    state_file.unlink()
+                    print(f"Cleaned up batch state file [check_batch_status]")
+            except Exception as e:
+                print(f"Warning: Could not remove batch state file: {e} [check_batch_status]")
+        else:
+            print("Debug mode: Preserving batch state file [check_batch_status]")
+            
+        return None, None, None
     
     if status.status != "completed":
         return None, None, None
@@ -947,7 +916,7 @@ def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang
     
     # Early check for batchcheck mode
     if mode == 'batchcheck':
-        state, state_file, status = check_batch_status(client)
+        state, state_file, status = check_batch_status(client, debug)  # Pass debug flag
         if not state:
             return
             
@@ -961,7 +930,7 @@ def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang
             client, [], {}, mode, from_lang, to_lang,
             {k: Path(v) for k, v in state['paths'].items()},
             model=model, debug=debug,
-            chapter_map=state['job_metadata']['chapter_map']  # Pass stored chapter_map
+            chapter_map=state['job_metadata']['chapter_map']
         )
         
         if translations:
@@ -973,13 +942,27 @@ def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang
             reassemble_translation(input_epub_path, output_epub_path, chapter_map, translations)
             print(f"Translated EPUB saved to {output_epub_path} [translate]")
             
-            # Clean up state file with error handling
-            try:
-                if state_file.exists():
-                    state_file.unlink()
-                    print(f"Cleaned up batch state file [translate]")
-            except Exception as e:
-                print(f"Warning: Could not remove batch state file: {e} [translate]")
+            # Clean up both job directory and OpenAI files if debug is not set
+            if not DEBUG:
+                print(f"Cleaning up job directory and batch files... [translate]")
+                file_ids = []
+                if input_file_id:
+                    file_ids.append(input_file_id)
+                if status and status.output_file_id:
+                    file_ids.append(status.output_file_id)
+                # Use paths from the state to clean up correct job directory
+                job_dir = Path(state['paths']['job_dir'])
+                cleanup_files(client, file_ids, temp_dir=job_dir, keep_temp=False)
+                
+                # Also clean up the batch state file
+                try:
+                    if state_file.exists():
+                        state_file.unlink()
+                        print(f"Cleaned up batch state file [translate]")
+                except Exception as e:
+                    print(f"Warning: Could not remove batch state file: {e} [translate]")
+            else:
+                print("Debug mode: Preserving temporary files [translate]")
             
         return
 
@@ -1102,20 +1085,25 @@ def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang
             return
         
         # Determine keep_temp based on debug flags and success state
-        keep_temp = True  # Default to True
-        print(f"Debug: keep_temp={keep_temp} (debug={debug}, mode={mode}, success={success}) [translate]")
+        keep_temp = DEBUG or not success
         
         # Perform cleanup if necessary
-        if not debug and mode != 'savebatch' and input_file_id and status:
-            temp_dir = ensure_temp_dir()
-            print(f"Cleaning up temporary files in {temp_dir} [translate]")
-            cleanup_files(client, [input_file_id, status.output_file_id], temp_dir=temp_dir, keep_temp=keep_temp)
+        if not DEBUG:
+            # Change: Use paths['job_dir'] instead of temp_dir
+            print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
+            # Only include OpenAI file IDs if they exist
+            file_ids = []
+            if input_file_id:
+                file_ids.append(input_file_id)
+            if status and status.output_file_id:
+                file_ids.append(status.output_file_id)
+            cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
         else:
             print(f"Preserving temporary files (keep_temp={keep_temp}) [translate]")
         
         if success:
             print("\nProcessing completed successfully [translate]")
-            if debug or mode:
+            if DEBUG:
                 print("Debug mode: Temporary files preserved in 'temp' directory [translate]")
         else:
             # Change the condition to check for both batch modes
@@ -1209,7 +1197,7 @@ def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
     
     return sorted(resumable_jobs, key=lambda x: x[2]['last_updated'], reverse=True)
 
-if __name__ == "__main__":
+def main():
     import sys
     try:
         parser = argparse.ArgumentParser(description='App to translate EPUB books.')
@@ -1219,14 +1207,18 @@ if __name__ == "__main__":
         parser.add_argument('--from-lang', help='Source language.', default='DE')
         parser.add_argument('--to-lang', help='Target language.', default='EN')
         parser.add_argument('--debug', action='store_true', help='Keep batch files and temp directory for debugging.')
-        parser.add_argument('--mode', choices=['batch', 'savebatch', 'resume', 'test', 'batchcheck', 'resumebatch'], 
-                           help='Processing mode: "batch" for batch API, "savebatch" to save batch files, '
+        parser.add_argument('--mode', choices=['batch', 'resume', 'test', 'batchcheck', 'resumebatch'], 
+                           help='Processing mode: "batch" for batch API, '
                                 '"resume" to continue previous job, "test" to use test translations, '
                                 '"batchcheck" to check batch status, "resumebatch" to resume with batch processing')
         parser.add_argument('--model', help='The model to use for translation (default: gpt-4o-mini)', default='gpt-4o-mini')
         # Remove --inline-css argument
 
         args = parser.parse_args()
+
+        # Set debug mode globally
+        global DEBUG
+        DEBUG = args.debug
 
         # Validate input file
         input_path = Path(args.input)
@@ -1287,11 +1279,12 @@ if __name__ == "__main__":
         # Call translate - remove test_translations_file parameter
         translate(client, args.input, output_path, args.from_lang, args.to_lang, 
                  mode=args.mode, model=args.model, 
-                 fast=(args.mode not in ['batch', 'savebatch']),
-                 resume_job_id=job_id, 
-                 debug=args.debug)  # Remove inline_css argument
+                 fast=(args.mode not in ['batch']),                 resume_job_id=job_id)
     except KeyboardInterrupt:
         print("\nTranslation interrupted. Use --mode resume to continue later. [main]")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
 
 
