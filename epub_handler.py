@@ -1,5 +1,4 @@
 import zipfile
-from pathlib import Path
 from io import BytesIO
 from html_processor import split_html_by_paragraph  # Use absolute import
 
@@ -30,6 +29,37 @@ class EPUBHandler:
                     continue
                     
         return content_files
+    
+    @staticmethod
+    def build_chunks(input_epub_path, max_chunk_size=10000):
+        """
+        Extract HTML files from the EPUB and split into chunks without modifying content.
+        Returns all_chunks and chapter_map.
+        """
+        content_files = EPUBHandler.extract_content(input_epub_path)
+        
+        all_chunks = []
+        chapter_map = {}
+        chunk_counter = 0
+
+        for html_file, content in content_files:
+            print(f"Processing {html_file} [build_chunks]")
+
+            # Split content into chunks (without modifying the content)
+            chunks = split_html_by_paragraph(content, max_chunk_size)
+            print(f"Split into {len(chunks)} chunks [build_chunks]")
+
+            for pos, chunk in enumerate(chunks):
+                chunk_id = f'chunk-{chunk_counter}'
+                # Ensure chunk_id is a string
+                chunk_id = str(chunk_id)
+                all_chunks.append((chunk_id, chunk))
+                chapter_map[chunk_id] = (html_file, pos)
+                chunk_counter += 1
+
+        print(f"Total chunks created: {len(all_chunks)} [build_chunks]")
+
+        return all_chunks, chapter_map
     
     @staticmethod
     def save_translated_epub(input_epub_path, output_epub_path, translations, chapter_map):

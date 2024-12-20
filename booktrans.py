@@ -470,37 +470,6 @@ def handle_interrupt(signum, frame):
     print("\nInterrupt received. Saving state and exiting... [handle_interrupt]")
     raise KeyboardInterrupt
 
-def build_chunks(input_epub_path, paths):
-    """Extract HTML files from the EPUB and split into chunks without modifying content."""
-    epub_handler = EPUBHandler()
-    content_files = epub_handler.extract_content(input_epub_path)
-    
-    all_chunks = []
-    chapter_map = {}
-    chunk_counter = 0
-
-    for html_file, content in content_files:
-        print(f"Processing {html_file} [build_chunks]")
-
-        # Split content into chunks (without modifying the content)
-        chunks = split_html_by_paragraph(content)
-        print(f"Split into {len(chunks)} chunks [build_chunks]")
-
-        for pos, chunk in enumerate(chunks):
-            chunk_id = f'chunk-{chunk_counter}'
-            # Ensure chunk_id is a string
-            chunk_id = str(chunk_id)
-            all_chunks.append((chunk_id, chunk))
-            chapter_map[chunk_id] = (html_file, pos)
-            chunk_counter += 1
-
-    print(f"Total chunks created: {len(all_chunks)} [build_chunks]")
-
-    # Save chunks and chapter map
-    save_chunks(paths, all_chunks, chapter_map)
-
-    return all_chunks, chapter_map
-
 def save_translations(paths, translations):
     """Save translations to translations.json with fsync for durability."""
     # Ensure all keys in translations are strings
@@ -922,7 +891,8 @@ def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang
                 
             else:
                 # Process EPUB only if not resuming
-                all_chunks, chapter_map = build_chunks(input_epub_path, paths)
+                all_chunks, chapter_map = EPUBHandler.build_chunks(input_epub_path)
+                save_chunks(paths, all_chunks, chapter_map)
                 translations = {}
 
             print(f"Total chunks to process: {len(all_chunks)} [translate]")
