@@ -32,7 +32,7 @@ def sanitize_html_output(html_content):
         lines = lines[:-1]
     return '\n'.join(lines)
 
-def write_pdf_from_html(translations, output_pdf_path):
+def write_pdf(translations, output_pdf_path):
     """Write a new PDF document from HTML pages"""
     doc = fitz.open()
     page_width = 6 * 72  # 6 inches in points
@@ -70,7 +70,7 @@ def main():
 
         output_pdf_path = Path('./output/pdf_imagetest.pdf')
         output_pdf_path.parent.mkdir(exist_ok=True)
-        write_pdf_from_html(translations, output_pdf_path)
+        write_pdf(translations, output_pdf_path)
         return
 
     # Create output directory
@@ -99,7 +99,7 @@ def main():
                     "content": [
                         {
                             "type": "text",
-                            "text": "Extract the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Do not use tables. Pay special attention to italics formatting. CRITICAL: If a block of text is smaller than other text in the image, also make it smaller in your HTML. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                            "text": "Extract the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Do not use tables. Pay special attention to ITALICS and SUPERSCRIPT formatting. CRITICAL: If a block of text is smaller than other text in the image, use 'font-size: smaller' for it in your HTML. Use 'font-family: serif' and default line-height. If the image contains GREEK characters, recognise them letter-by-letter and do not try to make sense of the words. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                         },
                         {
                             "type": "image_url",

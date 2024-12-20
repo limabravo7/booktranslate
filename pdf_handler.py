@@ -1,8 +1,9 @@
-import json
-import fitz  # PyMuPDF
+import argparse
 import base64
+import json
 import yaml
 from pathlib import Path
+import fitz  # PyMuPDF
 from openai import OpenAI
 
 class PDFHandler:
@@ -66,7 +67,25 @@ class PDFHandler:
         return '\n'.join(lines)
 
     @staticmethod
-    def process_pdf(input_pdf_path, dpi=150):
+    def save_translated_pdf(translations, output_pdf_path):
+        """Write a new PDF document from HTML pages"""
+        output_pdf_path = Path(output_pdf_path)  # Ensure it's a Path object
+        output_pdf_path.parent.mkdir(exist_ok=True)
+        doc = fitz.open()
+        page_width = 6 * 72  # 6 inches in points
+        page_height = 9 * 72  # 9 inches in points
+        margin = 1 * 72  # 1 inch in points
+
+        for chunk_id in sorted(translations.keys(), key=lambda x: int(x.split('-')[1])):
+            html_content = translations[chunk_id]
+            page = doc.new_page(width=page_width, height=page_height)
+            # Insert HTML content into the page with a bounding box
+            page.insert_htmlbox(fitz.Rect(margin, margin, page_width - margin, page_height - margin), html_content)
+        doc.save(output_pdf_path)
+        print(f"PDF saved to {output_pdf_path}")
+
+    @staticmethod
+    def transcribe_pdf(input_pdf_path, dpi=150):
         input_pdf_path = Path(input_pdf_path)
         if not input_pdf_path.exists():
             print(f"Error: Input file not found: {input_pdf_path}")
@@ -88,7 +107,7 @@ class PDFHandler:
         # Process each image
         for page_num, image_path in enumerate(sorted(output_dir.glob("*.png"))):
             base64_image = PDFHandler.encode_image(image_path)
-            print(f"Translating {image_path}")
+            print(f"Transcribing {image_path}")
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -98,7 +117,7 @@ class PDFHandler:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Extract the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Do not use tables. Pay special attention to italics formatting. CRITICAL: If a block of text is smaller than other text in the image, also make it smaller in your HTML. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                "text": "Extract the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Do not use tables. Pay special attention to ITALICS and SUPERSCRIPT formatting. CRITICAL: If a block of text is smaller than other text in the image, use 'font-size: smaller' for it in your HTML. Use 'font-family: serif' and default line-height. If the image contains GREEK characters, recognise them letter-by-letter and do not try to make sense of the words. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                             },
                             {
                                 "type": "image_url",
@@ -138,3 +157,8 @@ class PDFHandler:
             json.dump(chapter_map, f, indent=4)
 
         print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
+
+        return all_chunks, chapter_map
+
+if __name__ == "__main__":
+    PDFHandler.main()

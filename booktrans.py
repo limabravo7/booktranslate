@@ -13,6 +13,7 @@ import signal
 import time  # Add this import at the top with other imports
 from epub_handler import EPUBHandler
 from html_processor import split_html_by_paragraph  # Remove split_sentences import
+from pdf_handler import PDFHandler  # Import PDFHandler
 
 # Add UTC constant
 UTC = timezone.utc
@@ -27,18 +28,6 @@ def ensure_dir(name):
     dir_path = Path(__file__).parent / name
     dir_path.mkdir(exist_ok=True)
     return dir_path
-
-def ensure_temp_dir():
-    """Create temp directory if it doesn't exist"""
-    return ensure_dir("temp")
-
-def ensure_batch_dir():
-    """Create batch directory if it doesn't exist"""
-    return ensure_dir("batch")
-
-def ensure_output_dir():
-    """Create output directory if it doesn't exist"""
-    return ensure_dir("output")
 
 def chmod_recursive(path):
     """Recursively change permissions"""
@@ -129,7 +118,7 @@ def create_job_id(input_epub_path, from_lang, to_lang, model, timestamp=None):
 
 def ensure_temp_structure(job_id):
     """Create and return paths for all temporary files"""
-    temp_dir = ensure_temp_dir()
+    temp_dir = ensure_dir("temp")
     job_dir = temp_dir / job_id
     job_dir.mkdir(exist_ok=True)
     
@@ -337,7 +326,7 @@ def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model=
     else:
         input_epub_path = "unknown_input"  # Fallback value if paths not provided
 
-    temp_dir = ensure_temp_dir()
+    temp_dir = ensure_dir("temp")
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     import select
     import sys
@@ -485,7 +474,7 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
     """Handle translation based on the specified mode and update translations."""
     if mode == 'batchcheck':
         # Load saved batch state and check status
-        temp_dir = ensure_temp_dir()
+        temp_dir = ensure_dir("temp")
         state, state_file = load_batch_state(temp_dir)
         if not state:
             print("No batch state found. Run with --mode batch first. [process_translations]")
@@ -607,7 +596,7 @@ def reassemble_translation(input_epub_path, output_epub_path, chapter_map, trans
 
 def check_batch_status(client, debug=False):  # Add debug parameter
     """Check status of most recent batch job and return state if complete"""
-    temp_dir = ensure_temp_dir()
+    temp_dir = ensure_dir("temp")
     state_data = load_batch_state(temp_dir)
     
     if not state_data:
@@ -763,222 +752,253 @@ def select_resumable_job(input_epub_path, from_lang, to_lang, model, mode):
             pass
         print("Invalid choice, please try again [select_resumable_job]")
 
-def translate(client, input_epub_path, output_epub_path, from_lang='DE', to_lang='EN', 
+def translate(client, input_path, output_path, from_lang='DE', to_lang='EN', 
               mode=None, model='gpt-4o-mini', fast=False, resume_job_id=None, 
-              debug=False):
+              debug=False, filetype='epub'):  # Add filetype parameter
     
     # Initialize success flag at the start
     success = False
-    
-    # Early check for batchcheck mode
-    if mode == 'batchcheck':
-        state, state_file, status = check_batch_status(client, debug)  # Pass debug flag
-        if not state:
+    if filetype == 'epub':
+        # Early check for batchcheck mode
+        if mode == 'batchcheck':
+            state, state_file, status = check_batch_status(client, debug)  # Pass debug flag
+            if not state:
+                return
+                
+            # Set up minimal structure for processing results
+            timestamp = state['timestamp']
+            job_id = create_job_id(input_path, from_lang, to_lang, model, timestamp)
+            paths = ensure_temp_structure(job_id)
+            
+            # Let process_translations handle everything including merging existing translations
+            translations, input_file_id, status = process_translations(
+                client, [], {}, mode, from_lang, to_lang,
+                {k: Path(v) for k, v in state['paths'].items()},
+                model=model, debug=debug,
+                chapter_map=state['job_metadata']['chapter_map']
+            )
+            
+            if translations:
+                # Get chapter_map from the same source that process_translations used
+                chapter_map = {
+                    chunk_id: (data["item"], data["pos"])
+                    for chunk_id, data in state['job_metadata']['chapter_map'].items()
+                }
+                reassemble_translation(input_path, output_path, chapter_map, translations)
+                print(f"Translated EPUB saved to {output_path} [translate]")
+                
+                # Clean up both job directory and OpenAI files if debug is not set
+                if not DEBUG:
+                    print(f"Cleaning up job directory and batch files... [translate]")
+                    file_ids = []
+                    if input_file_id:
+                        file_ids.append(input_file_id)
+                    if status and status.output_file_id:
+                        file_ids.append(status.output_file_id)
+                    # Use paths from the state to clean up correct job directory
+                    job_dir = Path(state['paths']['job_dir'])
+                    cleanup_files(client, file_ids, temp_dir=job_dir, keep_temp=False)
+                    
+                    # Also clean up the batch state file
+                    try:
+                        if state_file.exists():
+                            state_file.unlink()
+                            print(f"Cleaned up batch state file [translate]")
+                    except Exception as e:
+                        print(f"Warning: Could not remove batch state file: {e} [translate]")
+                else:
+                    print("Debug mode: Preserving temporary files [translate]")
+                
             return
-            
-        # Set up minimal structure for processing results
-        timestamp = state['timestamp']
-        job_id = create_job_id(input_epub_path, from_lang, to_lang, model, timestamp)
-        paths = ensure_temp_structure(job_id)
+
+        # Set up interrupt handler at start of function
+        original_handler = signal.signal(signal.SIGINT, handle_interrupt)
+        interrupted = False
         
-        # Let process_translations handle everything including merging existing translations
-        translations, input_file_id, status = process_translations(
-            client, [], {}, mode, from_lang, to_lang,
-            {k: Path(v) for k, v in state['paths'].items()},
-            model=model, debug=debug,
-            chapter_map=state['job_metadata']['chapter_map']
-        )
+        test_translations = None
+        if mode == 'test':  # Check mode instead of test_translations_file
+            test_translations = load_test_translations(input_path)
+            if test_translations is None:
+                return
+
+        input_file_id = None  # Initialize variables
+        status = None
         
-        if translations:
-            # Get chapter_map from the same source that process_translations used
-            chapter_map = {
-                chunk_id: (data["item"], data["pos"])
-                for chunk_id, data in state['job_metadata']['chapter_map'].items()
-            }
-            reassemble_translation(input_epub_path, output_epub_path, chapter_map, translations)
-            print(f"Translated EPUB saved to {output_epub_path} [translate]")
+        try:
+            timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
             
-            # Clean up both job directory and OpenAI files if debug is not set
+            # Handle both resume and resumebatch modes job selection
+            # Only call select_resumable_job if we didn't get a job_id from main
+            if mode in ['resume', 'resumebatch'] and resume_job_id is None:
+                resume_job_id = select_resumable_job(input_path, from_lang, to_lang, model, mode)
+                if resume_job_id is None:
+                    print("User chose to quit. [translate]")
+                    return
+                
+            if resume_job_id:
+                job_id = resume_job_id
+                print(f"Resuming job: {job_id} [translate]")
+                paths = ensure_temp_structure(job_id)
+                
+                # Try to load existing state
+                existing_state = load_job_state(paths)
+                if not existing_state:
+                    print(f"No valid state found in {job_id}, starting fresh translation [translate]")
+                    resume_job_id = None
+                    job_id = create_job_id(input_path, from_lang, to_lang, model)
+                    paths = ensure_temp_structure(job_id)
+                    existing_state = None
+            else:
+                job_id = create_job_id(input_path, from_lang, to_lang, model)
+                print(f"Starting new job: {job_id} [translate]")
+                paths = ensure_temp_structure(job_id)
+                existing_state = None
+
+            log_progress(paths, f"{'Resuming' if resume_job_id else 'Starting'} translation job: {job_id}")
+            
+            success = False
+            all_chunks = []
+            chapter_map = {}
+            translations = {}
+            
+            try:
+                print(f"Started at: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC [translate]")
+                print(f"Using model: {model} [translate]")
+                
+                # Use existing state if resuming
+                if resume_job_id:
+                    print("\nResuming from previous state: [translate]")
+                    print(f"Total chunks: {existing_state['chunks_total']} [translate]")
+                    print(f"Completed translations: {len(existing_state.get('translations', {}))} [translate]")
+                    
+                    # Use existing data
+                    all_chunks = existing_state['chunks']
+                    chapter_map = existing_state['chapter_map']
+                    translations = existing_state.get('translations', {})
+                    
+                    print(f"Resumed with {len(translations)} existing translations [translate]")
+                    
+                else:
+                    # Process EPUB only if not resuming
+                    all_chunks, chapter_map = EPUBHandler.build_chunks(input_path)
+                    save_chunks(paths, all_chunks, chapter_map)
+                    translations = {}
+
+                print(f"Total chunks to process: {len(all_chunks)} [translate]")
+
+                # Determine mode based on flags - IMPORTANT: preserve mode if resuming
+                if not mode:
+                    mode = 'fast' if fast else 'batch'
+                    
+                # Process translations using the helper function
+                translations, input_file_id, status = process_translations(
+                    client, all_chunks, translations, mode, from_lang, to_lang,
+                    paths, model=model, test_translations=test_translations,
+                    debug=debug, chapter_map=chapter_map
+                )
+                
+                print(f"Final translation count: {len(translations)} [translate]")
+                
+                # Save final state before reassembly
+                save_translations(paths, translations)
+                
+                # Add early return for empty translations
+                if len(translations) == 0:
+                    print("No translations available. Exiting without creating output file. [translate]")
+                    return
+                
+                # Only reassemble if we have translations
+                reassemble_translation(input_path, output_path, chapter_map, translations)
+                
+                print(f"Translated EPUB saved to {output_path} [translate]")
+                success = True
+
+            except KeyboardInterrupt:
+                interrupted = True  # Set flag
+                print("\nInterrupted by user. Progress is saved and can be resumed with --mode resume [translate]")
+                return
+                    
+            except Exception as e:
+                print(f"Error during processing: {e} [translate]")
+                raise
+
+        finally:
+            # Restore original interrupt handler
+            signal.signal(signal.SIGINT, original_handler)
+            
+            # Skip cleanup if interrupted
+            if interrupted:
+                return
+            
+            # Determine keep_temp based on debug flags and success state
+            keep_temp = DEBUG or not success
+            
+            # Perform cleanup if necessary
             if not DEBUG:
-                print(f"Cleaning up job directory and batch files... [translate]")
+                # Change: Use paths['job_dir'] instead of temp_dir
+                print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
+                # Only include OpenAI file IDs if they exist
                 file_ids = []
                 if input_file_id:
                     file_ids.append(input_file_id)
                 if status and status.output_file_id:
                     file_ids.append(status.output_file_id)
-                # Use paths from the state to clean up correct job directory
-                job_dir = Path(state['paths']['job_dir'])
-                cleanup_files(client, file_ids, temp_dir=job_dir, keep_temp=False)
-                
-                # Also clean up the batch state file
-                try:
-                    if state_file.exists():
-                        state_file.unlink()
-                        print(f"Cleaned up batch state file [translate]")
-                except Exception as e:
-                    print(f"Warning: Could not remove batch state file: {e} [translate]")
+                cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
             else:
-                print("Debug mode: Preserving temporary files [translate]")
+                print(f"Preserving temporary files (keep_temp={keep_temp}) [translate]")
             
-        return
-
-    # Set up interrupt handler at start of function
-    original_handler = signal.signal(signal.SIGINT, handle_interrupt)
-    interrupted = False
-    
-    test_translations = None
-    if mode == 'test':  # Check mode instead of test_translations_file
-        test_translations = load_test_translations(input_epub_path)
-        if test_translations is None:
-            return
-
-    input_file_id = None  # Initialize variables
-    status = None
-    
-    try:
-        timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
-        
-        # Handle both resume and resumebatch modes job selection
-        # Only call select_resumable_job if we didn't get a job_id from main
-        if mode in ['resume', 'resumebatch'] and resume_job_id is None:
-            resume_job_id = select_resumable_job(input_epub_path, from_lang, to_lang, model, mode)
-            if resume_job_id is None:
-                print("User chose to quit. [translate]")
-                return
-            
-        if resume_job_id:
-            job_id = resume_job_id
-            print(f"Resuming job: {job_id} [translate]")
-            paths = ensure_temp_structure(job_id)
-            
-            # Try to load existing state
-            existing_state = load_job_state(paths)
-            if not existing_state:
-                print(f"No valid state found in {job_id}, starting fresh translation [translate]")
-                resume_job_id = None
-                job_id = create_job_id(input_epub_path, from_lang, to_lang, model)
-                paths = ensure_temp_structure(job_id)
-                existing_state = None
-        else:
-            job_id = create_job_id(input_epub_path, from_lang, to_lang, model)
-            print(f"Starting new job: {job_id} [translate]")
-            paths = ensure_temp_structure(job_id)
-            existing_state = None
-
-        log_progress(paths, f"{'Resuming' if resume_job_id else 'Starting'} translation job: {job_id}")
-        
+            if success:
+                print("\nProcessing completed successfully [translate]")
+                if DEBUG:
+                    print("Debug mode: Temporary files preserved in 'temp' directory [translate]")
+            else:
+                # Change the condition to check for both batch modes
+                if mode in ['batchcheck', 'batch'] and status:
+                    print(f"\nCurrent batch status: {status.status} [translate]")
+                    if status.status == 'in_progress':
+                        print("Batch processing is still in progress [translate]")
+                        print("Run again with --mode batchcheck to check status [translate]")
+                    else:
+                        print("\nProcessing failed - temporary files preserved in 'temp' directory [translate]")
+                else:
+                    print("\nProcessing failed - temporary files preserved in 'temp' directory [translate]")
+    elif filetype == 'pdf':
+        #Initialise
         success = False
         all_chunks = []
         chapter_map = {}
         translations = {}
-        
-        try:
-            print(f"Started at: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC [translate]")
-            print(f"Using model: {model} [translate]")
-            
-            # Use existing state if resuming
-            if resume_job_id:
-                print("\nResuming from previous state: [translate]")
-                print(f"Total chunks: {existing_state['chunks_total']} [translate]")
-                print(f"Completed translations: {len(existing_state.get('translations', {}))} [translate]")
-                
-                # Use existing data
-                all_chunks = existing_state['chunks']
-                chapter_map = existing_state['chapter_map']
-                translations = existing_state.get('translations', {})
-                
-                print(f"Resumed with {len(translations)} existing translations [translate]")
-                
-            else:
-                # Process EPUB only if not resuming
-                all_chunks, chapter_map = EPUBHandler.build_chunks(input_epub_path)
-                save_chunks(paths, all_chunks, chapter_map)
-                translations = {}
+        mode = 'fast'
 
-            print(f"Total chunks to process: {len(all_chunks)} [translate]")
+        job_id = create_job_id(input_path, from_lang, to_lang, model)
+        print(f"Starting new job: {job_id} [translate]")
+        paths = ensure_temp_structure(job_id)
+        
+        print("PDF detected, transcribing... [translate]")
 
-            # Determine mode based on flags - IMPORTANT: preserve mode if resuming
-            if not mode:
-                mode = 'fast' if fast else 'batch'
-                
-            # Process translations using the helper function
-            translations, input_file_id, status = process_translations(
-                client, all_chunks, translations, mode, from_lang, to_lang,
-                paths, model=model, test_translations=test_translations,
-                debug=debug, chapter_map=chapter_map  # Add chapter_map parameter
-            )
-            
-            print(f"Final translation count: {len(translations)} [translate]")
-            
-            # Save final state before reassembly
-            save_translations(paths, translations)
-            
-            # Add early return for empty translations
-            if len(translations) == 0:
-                print("No translations available. Exiting without creating output file. [translate]")
-                return
-            
-            # Only reassemble if we have translations
-            reassemble_translation(input_epub_path, output_epub_path, chapter_map, translations)
-            
-            print(f"Translated EPUB saved to {output_epub_path} [translate]")
-            success = True
+        # Transcribe PDF to HTML
+        all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, dpi=150)
+        print("Transcription complete... [translate]")
 
-        except KeyboardInterrupt:
-            interrupted = True  # Set flag
-            print("\nInterrupted by user. Progress is saved and can be resumed with --mode resume [translate]")
-            return
-                
-        except Exception as e:
-            print(f"Error during processing: {e} [translate]")
-            raise
+        # Translate HTML chunks
+        translations, input_file_id, status = process_translations(
+                    client, all_chunks, translations, mode, from_lang, to_lang,
+                    paths, model=model, test_translations=None,
+                    debug=debug, chapter_map=chapter_map
+                )
+        print(f"Final translation count: {len(translations)} [translate]")
 
-    finally:
-        # Restore original interrupt handler
-        signal.signal(signal.SIGINT, original_handler)
-        
-        # Skip cleanup if interrupted
-        if interrupted:
-            return
-        
-        # Determine keep_temp based on debug flags and success state
-        keep_temp = DEBUG or not success
-        
-        # Perform cleanup if necessary
-        if not DEBUG:
-            # Change: Use paths['job_dir'] instead of temp_dir
-            print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
-            # Only include OpenAI file IDs if they exist
-            file_ids = []
-            if input_file_id:
-                file_ids.append(input_file_id)
-            if status and status.output_file_id:
-                file_ids.append(status.output_file_id)
-            cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
-        else:
-            print(f"Preserving temporary files (keep_temp={keep_temp}) [translate]")
-        
-        if success:
-            print("\nProcessing completed successfully [translate]")
-            if DEBUG:
-                print("Debug mode: Temporary files preserved in 'temp' directory [translate]")
-        else:
-            # Change the condition to check for both batch modes
-            if mode in ['batchcheck', 'batch'] and status:
-                print(f"\nCurrent batch status: {status.status} [translate]")
-                if status.status == 'in_progress':
-                    print("Batch processing is still in progress [translate]")
-                    print("Run again with --mode batchcheck to check status [translate]")
-                else:
-                    print("\nProcessing failed - temporary files preserved in 'temp' directory [translate]")
-            else:
-                print("\nProcessing failed - temporary files preserved in 'temp' directory [translate]")
-        
+        # Save final state before reassembly
+        save_translations(paths, translations)
+        print(f"Translations saved: {paths['translations_file']} [translate]")
+
+        PDFHandler.save_translated_pdf(translations,output_path)
+
         print(f"Finished at: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC [translate]")
 
 def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
     """Find all resumable jobs for the given parameters without requiring job_state.json"""
-    temp_dir = ensure_temp_dir()
+    temp_dir = ensure_dir("temp")
     resumable_jobs = []
     
     # Look for job directories
@@ -1057,10 +1077,10 @@ def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
 def main():
     import sys
     try:
-        parser = argparse.ArgumentParser(description='App to translate EPUB books.')
+        parser = argparse.ArgumentParser(description='App to translate EPUB and PDF books.')
 
         parser.add_argument('--input', required=True, help='Input file path.')
-        parser.add_argument('--output', help='Output file path. Defaults to [input]_[to-lang]_[model].epub')
+        parser.add_argument('--output', help='Output file path. Defaults to [input]_[to-lang]_[model].[ext]')
         parser.add_argument('--from-lang', help='Source language.', default='DE')
         parser.add_argument('--to-lang', help='Target language.', default='EN')
         parser.add_argument('--debug', action='store_true', help='Keep batch files and temp directory for debugging.')
@@ -1081,9 +1101,12 @@ def main():
         input_path = Path(args.input)
         if not input_path.exists():
             parser.error(f"Input file not found: {args.input} [main]")
-        if input_path.suffix.lower() != '.epub':
-            parser.error(f"Input file must be an EPUB file: {args.input} [main]")
+        if input_path.suffix.lower() not in ['.epub', '.pdf']:
+            parser.error(f"Input file must be an EPUB or PDF file: {args.input} [main]")
         
+        # Determine file type
+        filetype = input_path.suffix.lower().lstrip('.')
+
         # Check for resumable jobs if in resume mode
         job_id = None
         if args.mode in ['resume', 'resumebatch']:  # Changed condition to catch both modes
@@ -1127,8 +1150,8 @@ def main():
         if args.output:
             output_path = args.output
         else:
-            output_dir = ensure_output_dir()
-            output_path = str(output_dir / f'{input_path.stem}_{args.to_lang.lower()}_{args.model}.epub')
+            output_dir = ensure_dir("output")
+            output_path = str(output_dir / f'{input_path.stem}_{args.to_lang.lower()}_{args.model}.{filetype}')
 
         config = read_config()
         client = OpenAI(api_key=config['openai']['api_key'])
@@ -1136,7 +1159,8 @@ def main():
         # Call translate - remove test_translations_file parameter
         translate(client, args.input, output_path, args.from_lang, args.to_lang, 
                  mode=args.mode, model=args.model, 
-                 fast=(args.mode not in ['batch']),                 resume_job_id=job_id)
+                 fast=(args.mode not in ['batch']), resume_job_id=job_id, 
+                 debug=args.debug, filetype=filetype)  # Pass filetype to translate
     except KeyboardInterrupt:
         print("\nTranslation interrupted. Use --mode resume to continue later. [main]")
         sys.exit(1)
