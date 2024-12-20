@@ -11,6 +11,8 @@ from pathlib import Path
 import sys
 import signal
 import time  # Add this import at the top with other imports
+from epub_handler import EPUBHandler
+from html_processor import split_html_by_paragraph  # Remove split_sentences import
 
 # Add UTC constant
 UTC = timezone.utc
@@ -117,61 +119,6 @@ def read_config():
         print(f"Error: {config_file} not found. Please create it with your OpenAI API key. [read_config]")
         print("Example config.yaml content:\nopenai:\n  api_key: 'your-api-key-here' [read_config]")
         exit(1)
-
-def split_sentences(text):
-    """Split text into sentences while preserving common abbreviations and numerical citations"""
-    # Common abbreviations to preserve
-    abbreviations = r'(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|etc|vs|e\.g|i\.e|viz|cf|Ch|p|pp|vol|ex|no)\.'
-    # Add numerical citations pattern
-    numbers = r'\d+'
-    # Combine patterns - match either abbreviations or number.number pattern
-    no_split_pattern = f'(?:{abbreviations}|{numbers})'
-    # Split on period followed by space and capital letter, 
-    # but not if preceded by abbreviations or numbers
-    sentences = re.split(f'(?<!{no_split_pattern})\\. +(?=[A-Z])', text)
-    return [s + '.' for s in sentences[:-1]] + [sentences[-1]]  # Add periods back except for last sentence
-
-def split_html_by_paragraph(html_str, max_chunk_size=10000):
-    """Split HTML content by paragraphs, falling back to sentences only when necessary"""
-    paragraphs = html_str.split('</p>')
-    # Remove empty paragraphs and add closing tags back
-    paragraphs = [p.strip() + '</p>' for p in paragraphs if p.strip()]
-    chunks = []
-    current_chunk = ""
-
-    for paragraph in paragraphs:
-        # If adding this paragraph would exceed max size
-        if len(current_chunk) + len(paragraph) > max_chunk_size:
-            if current_chunk:
-                # Finalize current chunk, start new with this paragraph
-                chunks.append(current_chunk)
-                current_chunk = paragraph
-            else:
-                # This paragraph is first in chunk AND too big - split by sentences
-                sentences = split_sentences(paragraph)
-                temp_chunk = ""
-                
-                for sentence in sentences:
-                    if len(temp_chunk) + len(sentence) > max_chunk_size:
-                        if temp_chunk:
-                            chunks.append(temp_chunk)
-                        temp_chunk = sentence
-                    else:
-                        temp_chunk += ' ' if temp_chunk else ''
-                        temp_chunk += sentence
-                
-                if temp_chunk:
-                    chunks.append(temp_chunk)
-                current_chunk = ""
-        else:
-            # Paragraph fits, add it
-            current_chunk += ' ' if current_chunk else ''  # Changed from '\n\n' to ' '
-            current_chunk += paragraph
-    
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 def create_job_id(input_epub_path, from_lang, to_lang, model, timestamp=None):
     """Create unique job ID based on input parameters and timestamp"""
@@ -523,40 +470,29 @@ def handle_interrupt(signum, frame):
     print("\nInterrupt received. Saving state and exiting... [handle_interrupt]")
     raise KeyboardInterrupt
 
-def build_chunks(input_epub_path, paths):  # Remove inline_css parameter
+def build_chunks(input_epub_path, paths):
     """Extract HTML files from the EPUB and split into chunks without modifying content."""
-    import zipfile
+    epub_handler = EPUBHandler()
+    content_files = epub_handler.extract_content(input_epub_path)
+    
+    all_chunks = []
+    chapter_map = {}
+    chunk_counter = 0
 
-    # Open the EPUB archive
-    with zipfile.ZipFile(input_epub_path, 'r') as zip_ref:
-        # List all files in the EPUB
-        file_list = zip_ref.namelist()
+    for html_file, content in content_files:
+        print(f"Processing {html_file} [build_chunks]")
 
-        # Filter for HTML/XHTML files
-        html_files = [f for f in file_list if f.endswith(('.html', '.xhtml'))]
+        # Split content into chunks (without modifying the content)
+        chunks = split_html_by_paragraph(content)
+        print(f"Split into {len(chunks)} chunks [build_chunks]")
 
-        all_chunks = []
-        chapter_map = {}
-        chunk_counter = 0
-
-        for html_file in html_files:
-            # Read the raw content of the HTML file
-            with zip_ref.open(html_file) as file:
-                content = file.read().decode('utf-8')
-
-            print(f"Processing {html_file} [build_chunks]")
-
-            # Split content into chunks (without modifying the content)
-            chunks = split_html_by_paragraph(content)
-            print(f"Split into {len(chunks)} chunks [build_chunks]")
-
-            for pos, chunk in enumerate(chunks):
-                chunk_id = f'chunk-{chunk_counter}'
-                # Ensure chunk_id is a string
-                chunk_id = str(chunk_id)
-                all_chunks.append((chunk_id, chunk))
-                chapter_map[chunk_id] = (html_file, pos)
-                chunk_counter += 1
+        for pos, chunk in enumerate(chunks):
+            chunk_id = f'chunk-{chunk_counter}'
+            # Ensure chunk_id is a string
+            chunk_id = str(chunk_id)
+            all_chunks.append((chunk_id, chunk))
+            chapter_map[chunk_id] = (html_file, pos)
+            chunk_counter += 1
 
     print(f"Total chunks created: {len(all_chunks)} [build_chunks]")
 
@@ -696,58 +632,9 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
 
 def reassemble_translation(input_epub_path, output_epub_path, chapter_map, translations):
     """Reassemble the translated HTML files and create a new EPUB."""
-    import zipfile
-    from io import BytesIO
-
-    # Convert chapter_map to use filenames instead of ebooklib items
-    filename_map = {}
-    for chunk_id, (item, pos) in chapter_map.items():
-        filename = item if isinstance(item, str) else item.file_name
-        filename_map[chunk_id] = (filename, pos)
-
-    # Create a new EPUB file
-    with zipfile.ZipFile(input_epub_path, 'r') as zip_in:
-        with zipfile.ZipFile(output_epub_path, 'w') as zip_out:
-            # Group chunks by filename
-            file_chunks = {}
-            for chunk_id, (filename, pos) in filename_map.items():
-                if filename not in file_chunks:
-                    file_chunks[filename] = {}
-                if chunk_id in translations:
-                    file_chunks[filename][pos] = translations[chunk_id]
-
-            # Process all files from the original EPUB
-            for item in zip_in.infolist():
-                if item.filename in file_chunks:
-                    # This is a file that needs translation
-                    print(f"Processing translations for {item.filename} [reassemble_translation]")
-                    content = zip_in.read(item.filename).decode('utf-8')
-                    chunks = split_html_by_paragraph(content)
-                    
-                    # Replace chunks with translations
-                    for pos, chunk in file_chunks[item.filename].items():
-                        if pos < len(chunks):  # Ensure position is valid
-                            chunks[pos] = chunk
-                    
-                    # Reassemble the content
-                    translated_content = ''.join(chunks)
-                    
-                    # Create a new ZipInfo to avoid duplicate warnings
-                    new_info = zipfile.ZipInfo(filename=item.filename, 
-                                             date_time=item.date_time)
-                    new_info.compress_type = item.compress_type
-                    
-                    # Write the translated content
-                    zip_out.writestr(new_info, translated_content.encode('utf-8'))
-                else:
-                    # Copy unchanged files
-                    buffer = BytesIO(zip_in.read(item.filename))
-                    new_info = zipfile.ZipInfo(filename=item.filename,
-                                             date_time=item.date_time)
-                    new_info.compress_type = item.compress_type
-                    zip_out.writestr(new_info, buffer.getvalue())
-
-    print(f"Processed {len(file_chunks)} files with translations [reassemble_translation]")
+    epub_handler = EPUBHandler()
+    epub_handler.save_translated_epub(input_epub_path, output_epub_path, translations, chapter_map)
+    print(f"Processed translation output saved to {output_epub_path} [reassemble_translation]")
 
 def check_batch_status(client, debug=False):  # Add debug parameter
     """Check status of most recent batch job and return state if complete"""
