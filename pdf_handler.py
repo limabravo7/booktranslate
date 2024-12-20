@@ -5,6 +5,7 @@ import yaml
 from pathlib import Path
 import fitz  # PyMuPDF
 from openai import OpenAI
+import re
 
 class PDFHandler:
     """Handler for PDF file processing"""
@@ -32,7 +33,7 @@ class PDFHandler:
                     scale = max_height / pix.height
                     pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
                 
-                image_path = output_dir / f"page_{page_num}.png"
+                image_path = output_dir / f"page_{page_num:04d}.png"
                 pix.save(image_path)
                 print(f"Saved image: {image_path}")
 
@@ -57,14 +58,20 @@ class PDFHandler:
             return base64.b64encode(image_file.read()).decode("utf-8")
 
     @staticmethod
+    def remove_line_height_styles(html_content):
+        """Remove all line-height styles from the HTML content"""
+        return re.sub(r'line-height:\s*\d+(\.\d+)?;', '', html_content)
+
+    @staticmethod
     def sanitize_html_output(html_content):
-        """Sanitize the HTML output by removing markdown code block markers"""
+        """Sanitize the HTML output by removing markdown code block markers and line-height styles"""
         lines = html_content.split('\n')
         if lines[0].strip() == "```html":
             lines = lines[1:]
         if lines[-1].strip() == "```":
             lines = lines[:-1]
-        return '\n'.join(lines)
+        sanitized_content = '\n'.join(lines)
+        return PDFHandler.remove_line_height_styles(sanitized_content)
 
     @staticmethod
     def save_translated_pdf(translations, output_pdf_path):
@@ -72,9 +79,9 @@ class PDFHandler:
         output_pdf_path = Path(output_pdf_path)  # Ensure it's a Path object
         output_pdf_path.parent.mkdir(exist_ok=True)
         doc = fitz.open()
-        page_width = 6 * 72  # 6 inches in points
-        page_height = 9 * 72  # 9 inches in points
-        margin = 1 * 72  # 1 inch in points
+        page_width = 6.5 * 72  # inches to points
+        page_height = 9.5 * 72
+        margin = 0.5 * 72
 
         for chunk_id in sorted(translations.keys(), key=lambda x: int(x.split('-')[1])):
             html_content = translations[chunk_id]
@@ -83,6 +90,36 @@ class PDFHandler:
             page.insert_htmlbox(fitz.Rect(margin, margin, page_width - margin, page_height - margin), html_content)
         doc.save(output_pdf_path)
         print(f"PDF saved to {output_pdf_path}")
+
+    @staticmethod
+    def save_bilingual_pdf(original_pdf_path, translations, output_pdf_path):
+        """Write a new PDF document alternating between original and translated pages."""
+        original_pdf_path = Path(original_pdf_path)
+        output_pdf_path = Path(output_pdf_path)  # Ensure it's a Path object
+        output_pdf_path.parent.mkdir(exist_ok=True)
+        doc = fitz.open()
+        page_width = 6.5 * 72  # inches to points
+        page_height = 9.5 * 72
+        margin = 0.5 * 72
+
+        # Open the original PDF
+        original_doc = fitz.open(original_pdf_path)
+
+        for page_num in range(len(original_doc)):
+            # Add original page
+            original_page = original_doc.load_page(page_num)
+            doc.insert_pdf(original_doc, from_page=page_num, to_page=page_num)
+
+            # Add translated page
+            chunk_id = f'chunk-{page_num}'
+            if chunk_id in translations:
+                html_content = translations[chunk_id]
+                page = doc.new_page(width=page_width, height=page_height)
+                # Insert HTML content into the page with a bounding box
+                page.insert_htmlbox(fitz.Rect(margin, margin, page_width - margin, page_height - margin), html_content)
+
+        doc.save(output_pdf_path)
+        print(f"Bilingual PDF saved to {output_pdf_path}")
 
     @staticmethod
     def transcribe_pdf(input_pdf_path, dpi=150):
@@ -94,6 +131,10 @@ class PDFHandler:
         # Create output directory
         output_dir = Path('./tempimg')
         output_dir.mkdir(exist_ok=True)
+
+        # Clear temporary image dir
+        for png_file in output_dir.glob("*.png"):
+            png_file.unlink()
 
         # Generate images of PDF pages
         PDFHandler.generate_page_images(input_pdf_path, output_dir, dpi=dpi)
@@ -110,14 +151,14 @@ class PDFHandler:
             print(f"Transcribing {image_path}")
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "user",
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Extract the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Do not use tables. Pay special attention to ITALICS and SUPERSCRIPT formatting. CRITICAL: If a block of text is smaller than other text in the image, use 'font-size: smaller' for it in your HTML. Use 'font-family: serif' and default line-height. If the image contains GREEK characters, recognise them letter-by-letter and do not try to make sense of the words. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                "text": "You are performing optical character recognition (OCR). Extract ALL the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Pay special attention to indentation, centred text, PARAGRAPHS (do not break up paragraphs into individual lines), ITALICS and SUPERSCRIPT formatting.  If the image contains polytonic GREEK text, recognise them letter-by-letter and do not try to make sense of the words. CRITICAL: If the image contains text that looks like footnotes (lines/paragraphs of smaller text, found below normal sized text, often preceded by a number), make the footnotes use smaller font in your HTML. In your HTML, use 'font-family: serif'; do not use tables or line-height or any heading tags (e.g. <h1>). Use BOLD to indicate titles. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                             },
                             {
                                 "type": "image_url",
@@ -132,7 +173,7 @@ class PDFHandler:
             sanitized_html_content = PDFHandler.sanitize_html_output(html_content)
 
             # Save HTML content to file
-            html_file_path = output_dir / f"page_{page_num}.html"
+            html_file_path = output_dir / f"page_{page_num:04d}.html"
             with open(html_file_path, "w", encoding="utf-8") as html_file:
                 html_file.write(sanitized_html_content)
             
@@ -146,17 +187,17 @@ class PDFHandler:
                 "pos": 0
             }
 
-        # Write all_chunks to all_chunks.json
-        pdftemp_dir = Path('./pdftemp')
-        pdftemp_dir.mkdir(exist_ok=True)
-        with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
-            json.dump(all_chunks, f, indent=4)
+        # # Write all_chunks to all_chunks.json
+        # pdftemp_dir = Path('./pdftemp')
+        # pdftemp_dir.mkdir(exist_ok=True)
+        # with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
+        #     json.dump(all_chunks, f, indent=4)
 
-        # Write chapter_map to chapter_map.json
-        with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
-            json.dump(chapter_map, f, indent=4)
+        # # Write chapter_map to chapter_map.json
+        # with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
+        #     json.dump(chapter_map, f, indent=4)
 
-        print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
+        # print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
 
         return all_chunks, chapter_map
 

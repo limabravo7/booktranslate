@@ -1,4 +1,4 @@
-#v0.9: Flags: language settings (--from-lang DE --to-lang EN), processing --mode (--batch, --resume, --test), model selection (--model gpt-4o-mini), save temp files (--debug). Can resume expired or cancelled batch jobs. All jobs can be resumed in either fast or batch mode.
+#v0.9: Flags: language settings (--from-lang DE --to-lang EN), processing --mode (--batch, --resume, --test), model selection (--model gpt-4o-mini), save temp files (--debug). Can resume expired or cancelled batch jobs. All jobs can be resumed in either fast or batch mode. Custom prompt can be loaded from customprompt.txt. PDF jobs can produce facing bilingual output.
 
 import argparse
 import re
@@ -225,8 +225,14 @@ def log_progress(paths, message):
         print(f"Warning: Could not write to progress log: {e} [log_progress]")
         print(f"Progress: {message} [log_progress]")
 
-def system_prompt(from_lang, to_lang):
-    return f"""You are a {from_lang}-to-{to_lang} translator.
+def system_prompt(from_lang, to_lang, filetype):
+    custom_prompt_path = Path("./customprompt.txt")
+    if (custom_prompt_path.exists()):
+        with open(custom_prompt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    if filetype == 'epub':
+        return f"""You are a {from_lang}-to-{to_lang} translator.
 
 CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
 - Never remove or modify HTML/XML tags
@@ -237,7 +243,7 @@ CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
 - Do not merge or split HTML/XML elements
 - Do not add new HTML/XML formatting
 
-Translate ONLY the text that is in {from_lang} between tags.
+Translate ONLY and ALL text that is in {from_lang}.
 Leave in place WITHOUT translating or modifying in any way:
 - Greek/Latin words or text, including block quotations
 - HTML/XML attributes and values
@@ -266,6 +272,31 @@ Input: incessantly (82-84).6
 Output: incessantly (82-84).<sup>6</sup>
 
 Do not touch [number].[number] or Od.[number] or Il.[number] e.g.: 5.59, 12.52, Od.5, Il.12
+"""
+    elif filetype == 'pdf':
+        return f"""You are a {from_lang}-to-{to_lang} translator.
+
+CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
+- Never remove or modify HTML/XML tags
+- Keep ALL class names and IDs unchanged
+- Preserve ALL style attributes completely 
+- Maintain ALL paragraph (<p>) and div tags with their full attributes
+- Copy opening and closing tags exactly as they appear
+- Do not merge or split HTML/XML elements
+- Do not add new HTML/XML formatting
+
+Translate ONLY and ALL text that is in {from_lang}.
+Leave in place WITHOUT translating or modifying in any way:
+- Greek/Latin words or text, including block quotations
+- HTML/XML attributes and values
+
+Bad example:
+Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
+Output: The text...
+
+Good example:
+Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
+Output: <p class="block_36" style="font-size: 1.33333em">The text...</p>
 """
 
 def load_test_translations(test_file):
@@ -314,7 +345,7 @@ def load_batch_state(temp_dir):
         return json.load(f), latest_file
 
 def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model='gpt-4o-mini', 
-                         test_translations=None, keep_temp=False, paths=None, chapter_map=None):
+                         test_translations=None, keep_temp=False, paths=None, chapter_map=None, filetype='epub'):
     """Handle translation of all chunks in a single batch"""
     # Remove batchcheck handling from here since it's now in process_translations
     if mode == 'batchcheck':
@@ -344,7 +375,7 @@ def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model=
                     "messages": [
                         {
                             "role": "system",
-                            "content": system_prompt(from_lang, to_lang)
+                            "content": system_prompt(from_lang, to_lang, filetype)
                         },
                         {
                             "role": "user",
@@ -424,7 +455,7 @@ def parse_batch_response(response):
                 translations[chunk_id] = translated_text
     return translations
 
-def translate_chunk(client, text, chunk_id=None, from_lang='EN', to_lang='PL', model='gpt-4o-mini', test_translations=None):
+def translate_chunk(client, text, chunk_id=None, from_lang='EN', to_lang='PL', model='gpt-4o-mini', test_translations=None, filetype='epub'):
     """Translate a single chunk, with optional test mode"""
     if test_translations is not None:
         # Directly look up translation by chunk_id
@@ -436,7 +467,7 @@ def translate_chunk(client, text, chunk_id=None, from_lang='EN', to_lang='PL', m
             return f"[Translation content for chunk-{chunk_id} would go here]"
     
     # Normal API mode
-    system_message = system_prompt(from_lang, to_lang)
+    system_message = system_prompt(from_lang, to_lang, filetype)
     user_message = text
     
     response = client.chat.completions.create(
@@ -470,7 +501,7 @@ def save_translations(paths, translations):
 
 def process_translations(client, all_chunks, translations, mode, from_lang, to_lang, 
                          paths, model='gpt-4o-mini', test_translations=None, debug=False,
-                         chapter_map=None):
+                         chapter_map=None, filetype='epub'):
     """Handle translation based on the specified mode and update translations."""
     if mode == 'batchcheck':
         # Load saved batch state and check status
@@ -531,7 +562,7 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
         new_translations, input_file_id, status = batch_translate_chunks(
             client, untranslated_chunks, from_lang, to_lang, mode='batch', model=model,
             test_translations=test_translations, keep_temp=debug, paths=paths,
-            chapter_map=chapter_map
+            chapter_map=chapter_map, filetype=filetype
         )
         translations.update(new_translations)
         save_translations(paths, translations)
@@ -551,7 +582,7 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
             try:
                 translated_text = translate_chunk(
                     client, chunk_text, chunk_id=chunk_id, from_lang=from_lang, to_lang=to_lang,
-                    model=model, test_translations=test_translations
+                    model=model, test_translations=test_translations, filetype=filetype
                 )
                 # Ensure chunk_id is a string when saving translation
                 translations[str(chunk_id)] = translated_text
@@ -566,7 +597,7 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
         new_translations, input_file_id, status = batch_translate_chunks(
             client, untranslated_chunks, from_lang, to_lang, mode=mode, model=model,
             test_translations=test_translations, keep_temp=debug, paths=paths,
-            chapter_map=chapter_map  # Pass chapter_map to batch function
+            chapter_map=chapter_map, filetype=filetype  # Pass chapter_map to batch function
         )
         translations.update(new_translations)
         save_translations(paths, translations)
@@ -775,7 +806,8 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
                 client, [], {}, mode, from_lang, to_lang,
                 {k: Path(v) for k, v in state['paths'].items()},
                 model=model, debug=debug,
-                chapter_map=state['job_metadata']['chapter_map']
+                chapter_map=state['job_metadata']['chapter_map'],
+                filetype=filetype
             )
             
             if translations:
@@ -894,7 +926,7 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
                 translations, input_file_id, status = process_translations(
                     client, all_chunks, translations, mode, from_lang, to_lang,
                     paths, model=model, test_translations=test_translations,
-                    debug=debug, chapter_map=chapter_map
+                    debug=debug, chapter_map=chapter_map, filetype=filetype
                 )
                 
                 print(f"Final translation count: {len(translations)} [translate]")
@@ -978,13 +1010,14 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
 
         # Transcribe PDF to HTML
         all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, dpi=150)
+        save_chunks(paths, all_chunks, chapter_map)
         print("Transcription complete... [translate]")
 
         # Translate HTML chunks
         translations, input_file_id, status = process_translations(
                     client, all_chunks, translations, mode, from_lang, to_lang,
                     paths, model=model, test_translations=None,
-                    debug=debug, chapter_map=chapter_map
+                    debug=debug, chapter_map=chapter_map, filetype=filetype
                 )
         print(f"Final translation count: {len(translations)} [translate]")
 
@@ -992,9 +1025,27 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         save_translations(paths, translations)
         print(f"Translations saved: {paths['translations_file']} [translate]")
 
-        PDFHandler.save_translated_pdf(translations,output_path)
+        if mode == 'pdfbilingual':
+            PDFHandler.save_bilingual_pdf(input_path, translations, output_path)
+        else:
+            PDFHandler.save_translated_pdf(translations,output_path)
 
         print(f"Finished at: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC [translate]")
+        
+        success = True
+
+        keep_temp = DEBUG or not success
+        if not DEBUG:
+            print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
+            # Only include OpenAI file IDs if they exist
+            file_ids = []
+            if input_file_id:
+                file_ids.append(input_file_id)
+            if status and status.output_file_id:
+                file_ids.append(status.output_file_id)
+            cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
+        else:
+            print(f"Preserving temporary files (keep_temp={keep_temp}) [translate]")
 
 def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
     """Find all resumable jobs for the given parameters without requiring job_state.json"""
@@ -1084,7 +1135,7 @@ def main():
         parser.add_argument('--from-lang', help='Source language.', default='DE')
         parser.add_argument('--to-lang', help='Target language.', default='EN')
         parser.add_argument('--debug', action='store_true', help='Keep batch files and temp directory for debugging.')
-        parser.add_argument('--mode', choices=['batch', 'resume', 'test', 'batchcheck', 'resumebatch'], 
+        parser.add_argument('--mode', choices=['batch', 'resume', 'test', 'batchcheck', 'resumebatch', 'pdfbilingual'], 
                            help='Processing mode: "batch" for batch API, '
                                 '"resume" to continue previous job, "test" to use test translations, '
                                 '"batchcheck" to check batch status, "resumebatch" to resume with batch processing')
