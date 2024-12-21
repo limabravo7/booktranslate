@@ -1,6 +1,4 @@
 import base64
-import json
-import yaml
 from pathlib import Path
 import fitz  # PyMuPDF
 from openai import OpenAI
@@ -162,6 +160,13 @@ class PDFHandler:
         all_chunks = []
         chapter_map = {}
 
+        custompdfprompt = None
+        custom_pdfprompt_path = Path("./custompdfprompt.txt")
+        if custom_pdfprompt_path.exists():
+            print(f"Using custompdfprompt.txt [transcribe_pdf]")
+            with open(custom_pdfprompt_path, 'r', encoding='utf-8') as f:
+                custompdfprompt = f.read()
+
         # if batch:
         #     # Create batch input file
         #     temp_dir = Path('./temp')
@@ -204,6 +209,8 @@ class PDFHandler:
             base64_image = PDFHandler.encode_image(image_path)
             #print(f"Transcribing {image_path}")
 
+            print(f"Processing page {page_num + 1} of {len(list(output_dir.glob('*.png')))}")
+
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -213,7 +220,7 @@ class PDFHandler:
                             {
                                 "type": "text",
                                 # "text": "You are performing optical character recognition (OCR). Extract ALL the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Pay special attention to indentation, centred text, PARAGRAPHS (do not break up paragraphs into individual lines), ITALICS and SUPERSCRIPT formatting.  If the image contains polytonic GREEK text, recognise them letter-by-letter and do not try to make sense of the words. CRITICAL: If the image contains text that looks like footnotes (lines/paragraphs of smaller text, found below normal sized text, often preceded by a number), make the footnotes use smaller font in your HTML. In your HTML, use 'font-family: serif' (but Palatino font for Greek); do not use tables or line-height or any heading tags (e.g. <h1>). Use BOLD to indicate titles. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
-                                "text": "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. If you encounter fragments of sentences, do not leave them out but do your best to translate them. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                "text": custompdfprompt if custompdfprompt else "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. If you encounter fragments of sentences, do not leave them out but do your best to translate them. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                             },
                             {
                                 "type": "image_url",
@@ -231,8 +238,6 @@ class PDFHandler:
             html_file_path = output_dir / f"page_{page_num:04d}.html"
             with open(html_file_path, "w", encoding="utf-8") as html_file:
                 html_file.write(sanitized_html_content)
-            
-            print(f"Saved HTML: {html_file_path.name}")
 
             # Add to all_chunks and chapter_map
             chunk_id = f'chunk-{page_num}'
