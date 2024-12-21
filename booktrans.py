@@ -227,12 +227,18 @@ def log_progress(paths, message):
 
 def system_prompt(from_lang, to_lang, filetype):
     custom_prompt_path = Path("./customprompt.txt")
+    custom_epubprompt_path = Path("./customepubprompt.txt")
+    custom_pdfprompt_path = Path("./custompdfprompt.txt")
     if (custom_prompt_path.exists()):
         with open(custom_prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
 
     if filetype == 'epub':
-        return f"""You are a {from_lang}-to-{to_lang} translator.
+        if (custom_epubprompt_path.exists()):
+            with open(custom_epubprompt_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            return f"""You are a {from_lang}-to-{to_lang} translator for scholarly books.
 
 CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
 - Never remove or modify HTML/XML tags
@@ -274,7 +280,11 @@ Output: incessantly (82-84).<sup>6</sup>
 Do not touch [number].[number] or Od.[number] or Il.[number] e.g.: 5.59, 12.52, Od.5, Il.12
 """
     elif filetype == 'pdf':
-        return f"""You are a {from_lang}-to-{to_lang} translator.
+        if (custom_pdfprompt_path.exists()):
+            with open(custom_pdfprompt_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            return f"""You are a {from_lang}-to-{to_lang} translator for scholarly books.
 
 CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
 - Never remove or modify HTML/XML tags
