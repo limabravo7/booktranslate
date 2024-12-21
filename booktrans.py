@@ -10,10 +10,10 @@ import json
 from pathlib import Path
 import sys
 import signal
-import time  # Add this import at the top with other imports
+import time
 from epub_handler import EPUBHandler
-from html_processor import split_html_by_paragraph  # Remove split_sentences import
-from pdf_handler import PDFHandler  # Import PDFHandler
+from html_processor import split_html_by_paragraph
+from pdf_handler import PDFHandler
 
 # Add UTC constant
 UTC = timezone.utc
@@ -1013,7 +1013,8 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         all_chunks = []
         chapter_map = {}
         translations = {}
-        mode = 'fast'
+        temp_dir = ensure_dir("temp")
+        #mode = 'fast'
 
         timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
         job_id = create_job_id(input_path, from_lang, to_lang, model)
@@ -1022,18 +1023,98 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         
         print("PDF detected, transcribing... [translate]")
 
-        # Transcribe PDF to HTML
-        all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, paths, dpi=150)
-        save_chunks(paths, all_chunks, chapter_map)
-        print("Transcription complete... [translate]")
-
-        # Translate HTML chunks
-        # translations, input_file_id, status = process_translations(
-        #             client, all_chunks, translations, mode, from_lang, to_lang,
-        #             paths, model=model, test_translations=None,
-        #             debug=debug, chapter_map=chapter_map, filetype=filetype
+        if mode == 'batchcheck':
+            # state_data = load_batch_state(temp_dir)
+    
+            # if not state_data:
+            #     print("No batch state found. Run with --mode batch first. [translate > pdf]")
+            #     return
+            
+            # state, state_file = state_data
+            
+            # batch_id = state['batch_id']
+            # print(f"Checking status for batch {batch_id} [translate > pdf]")
+            # status = client.batches.retrieve(batch_id)
+            
+            # print(f"Status: {status.status} [translate > pdf]")
+            # print(f"Progress: {status.request_counts.completed}/{status.request_counts.total} [translate > pdf]")
+            
+            # if status.status == "completed":
+            #     print("Batch completed! Will retrieve results... [translate > pdf]")
+            #     response = client.files.content(status.output_file_id)
+            #     response_text = response.read().decode('utf-8')
+            #     translations = parse_batch_response(response_text)
+            #     print(f"Got {len(translations)} translation pages from batch [translate > pdf]")
+            return
+        # elif mode == 'batch':
+        #     print("batch pdf")
+        #     batch_file_path = PDFHandler.transcribe_pdf(input_path, paths, dpi=150, batch=True)
+            
+        #     print("Uploading batch file... [translate > pdf]")
+        #     batch_file = client.files.create(
+        #             file=open(batch_file_path, "rb"),
+        #             purpose="batch"
         #         )
-        # print(f"Final translation count: {len(translations)} [translate]")
+        #     input_file_id = batch_file.id
+
+        #     # Delete batch input file after uploading, unless debug flag is set
+        #     if not DEBUG:
+        #         try:
+        #             batch_file_path.unlink()
+        #             print(f"Deleted batch input file: {batch_file_path} [translate > pdf]")
+        #         except Exception as e:
+        #             print(f"Warning: Could not delete batch input file {batch_file_path}: {e} [translate > pdf]")
+    
+        #     print(f"Creating batch job with file ID: {input_file_id} [translate > pdf]")
+        #     batch_job = client.batches.create(
+        #         input_file_id=input_file_id,
+        #         endpoint="/v1/chat/completions",
+        #         completion_window="24h"
+        #     )
+            
+        #     batch_id = batch_job.id
+        #     print(f"Batch job created with ID: {batch_id} [translate > pdf]")
+                
+        #     print("\nBatch processing started. Checking initial status in 5 seconds... [translate > pdf]")
+        #     time.sleep(5)
+            
+        #     status = client.batches.retrieve(batch_id)
+        #     print(f"Status: {status.status} - Completed: {status.request_counts.completed}/{status.request_counts.total} [translate > pdf]")
+            
+        #     if status.status == "failed":
+        #         print("Batch processing failed. [translate > pdf]")
+        #         return {}, input_file_id, status
+                
+        #     # Save state and exit if not failed
+        #     job_metadata = {
+        #         "input_file": str(input_path),
+        #         "from_lang": from_lang,
+        #         "to_lang": to_lang,
+        #         "model": model,
+        #         "chapter_map": {chunk_id: {"item": str(item), "pos": pos} 
+        #                     for chunk_id, (item, pos) in chapter_map.items()} if chapter_map else {}
+        #     }
+
+        #     state_file = save_batch_state(temp_dir, batch_id, input_file_id, timestamp, job_metadata, paths)
+        #     print(f"\nBatch processing in progress. Saved state to: {state_file} [translate > pdf]")
+        #     print("Run script again with --mode batchcheck to check status and retrieve results [translate > pdf]")
+            
+
+        #     return
+
+        else:
+            # Transcribe PDF to HTML
+            all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, paths, dpi=150, batch=False)
+            save_chunks(paths, all_chunks, chapter_map)
+            print("Transcription complete... [translate]")
+
+            # Translate HTML chunks
+            # translations, input_file_id, status = process_translations(
+            #             client, all_chunks, translations, mode, from_lang, to_lang,
+            #             paths, model=model, test_translations=None,
+            #             debug=debug, chapter_map=chapter_map, filetype=filetype
+            #         )
+            # print(f"Final translation count: {len(translations)} [translate]")
 
         translations = {chunk_id: chunk for chunk_id, chunk in all_chunks}
 
@@ -1055,10 +1136,6 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
             print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
             # Only include OpenAI file IDs if they exist
             file_ids = []
-            if input_file_id:
-                file_ids.append(input_file_id)
-            if status and status.output_file_id:
-                file_ids.append(status.output_file_id)
             cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
         else:
             print(f"Preserving temporary files (keep_temp={keep_temp}) [translate]")

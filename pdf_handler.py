@@ -1,4 +1,3 @@
-import argparse
 import base64
 import json
 import yaml
@@ -6,7 +5,8 @@ from pathlib import Path
 import fitz  # PyMuPDF
 from openai import OpenAI
 import re
-import subprocess  # Add this import for running Ghostscript
+import subprocess
+from datetime import datetime
 
 class PDFHandler:
     """Handler for PDF file processing"""
@@ -153,7 +153,7 @@ class PDFHandler:
         PDFHandler.compress_pdf(temp_pdf_path, output_pdf_path)
 
     @staticmethod
-    def transcribe_pdf(input_pdf_path, paths, dpi=150):
+    def transcribe_pdf(input_pdf_path, paths, dpi=150, batch=False):
         input_pdf_path = Path(input_pdf_path)
         if not input_pdf_path.exists():
             print(f"Error: Input file not found: {input_pdf_path}")
@@ -176,7 +176,44 @@ class PDFHandler:
         all_chunks = []
         chapter_map = {}
 
-        # Process each image
+        # if batch:
+        #     # Create batch input file
+        #     temp_dir = Path('./temp')
+        #     temp_dir.mkdir(exist_ok=True)
+        #     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        #     batch_file_path = temp_dir / f"batch_input_{timestamp}.jsonl"
+            
+        #     with open(batch_file_path, "w", encoding="utf-8") as f:
+        #         for page_num, image_path in enumerate(sorted(output_dir.glob("*.png"))):
+        #             base64_image = PDFHandler.encode_image(image_path)
+        #             request = {
+        #                 "custom_id": f"chunk-{page_num}",
+        #                 "method": "POST",
+        #                 "url": "/v1/chat/completions",
+        #                 "body": {
+        #                     "model": "gpt-4o",
+        #                     "messages": [
+        #                         {
+        #                             "role": "system",
+        #                             "content": "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>."
+        #                         },
+        #                         {
+        #                             "role": "user",
+        #                             "content": "Analyze the following image.",
+        #                             "type": "image_url",
+        #                             "image_url": {
+        #                                 "url": f"data:image/png;base64,{base64_image}"
+        #                             }
+        #                         }
+        #                     ]
+        #                 }
+        #             }
+        #             f.write(json.dumps(request) + "\n")
+            
+        #     print(f"Batch input file created at {batch_file_path}")
+        #     return batch_file_path
+
+        # Process each image sequentially
         for page_num, image_path in enumerate(sorted(output_dir.glob("*.png"))):
             base64_image = PDFHandler.encode_image(image_path)
             print(f"Transcribing {image_path}")
@@ -190,7 +227,7 @@ class PDFHandler:
                             {
                                 "type": "text",
                                 # "text": "You are performing optical character recognition (OCR). Extract ALL the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Pay special attention to indentation, centred text, PARAGRAPHS (do not break up paragraphs into individual lines), ITALICS and SUPERSCRIPT formatting.  If the image contains polytonic GREEK text, recognise them letter-by-letter and do not try to make sense of the words. CRITICAL: If the image contains text that looks like footnotes (lines/paragraphs of smaller text, found below normal sized text, often preceded by a number), make the footnotes use smaller font in your HTML. In your HTML, use 'font-family: serif' (but Palatino font for Greek); do not use tables or line-height or any heading tags (e.g. <h1>). Use BOLD to indicate titles. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
-                                "text": "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                "text": "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. If you encounter fragments of sentences, do not leave them out but do your best to translate them. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                             },
                             {
                                 "type": "image_url",
