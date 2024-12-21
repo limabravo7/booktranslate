@@ -17,7 +17,8 @@ class PDFHandler:
         output_dir.mkdir(exist_ok=True)
 
         with fitz.open(pdf_path) as pdf:
-            for page_num in range(len(pdf)):
+            page_count = len(pdf)
+            for page_num in range(page_count):
                 page = pdf.load_page(page_num)
                 
                 # Calculate the scaling factor for the desired DPI
@@ -33,21 +34,9 @@ class PDFHandler:
                 
                 image_path = output_dir / f"page_{page_num:04d}.png"
                 pix.save(image_path)
-                print(f"Saved image: {image_path}")
+                #print(f"Saved image: {image_path}")
 
-        print(f"All pages have been saved as images in {output_dir}")
-
-    @staticmethod
-    def read_config():
-        config_file = 'config.yaml'
-        try:
-            with open(config_file, 'r') as f:
-                config = yaml.load(f, Loader=yaml.FullLoader)
-            return config
-        except FileNotFoundError:
-            print(f"Error: {config_file} not found. Please create it with your OpenAI API key. [read_config]")
-            print("Example config.yaml content:\nopenai:\n  api_key: 'your-api-key-here' [read_config]")
-            exit(1)
+        print(f"{page_count} pages saved as images in {output_dir.name}")
 
     @staticmethod
     def encode_image(image_path):
@@ -89,7 +78,7 @@ class PDFHandler:
                 f'-sOutputFile={output_pdf_path}',
                 input_pdf_path
             ], check=True)
-            print(f"Compressed PDF saved to {output_pdf_path}")
+            print(f"Compressed PDF saved to {output_pdf_path.name}")
         except subprocess.CalledProcessError as e:
             print(f"Error compressing PDF: {e}")
 
@@ -112,7 +101,7 @@ class PDFHandler:
         
         # Save the uncompressed PDF to a temporary file
         doc.save(temp_pdf_path)
-        print(f"Uncompressed PDF saved to {temp_pdf_path}")
+        print(f"Uncompressed PDF saved to {temp_pdf_path.name}")
 
         # Compress the PDF using Ghostscript
         PDFHandler.compress_pdf(temp_pdf_path, output_pdf_path)
@@ -147,13 +136,13 @@ class PDFHandler:
 
         # Save the uncompressed PDF to a temporary file
         doc.save(temp_pdf_path)
-        print(f"Uncompressed PDF saved to {temp_pdf_path}")
+        print(f"Uncompressed PDF saved to {temp_pdf_path.name}")
 
         # Compress the PDF using Ghostscript
         PDFHandler.compress_pdf(temp_pdf_path, output_pdf_path)
 
     @staticmethod
-    def transcribe_pdf(input_pdf_path, paths, dpi=150, batch=False):
+    def transcribe_pdf(client, input_pdf_path, paths, dpi=150, batch=False):
         input_pdf_path = Path(input_pdf_path)
         if not input_pdf_path.exists():
             print(f"Error: Input file not found: {input_pdf_path}")
@@ -169,9 +158,6 @@ class PDFHandler:
 
         # Generate images of PDF pages
         PDFHandler.generate_page_images(input_pdf_path, output_dir, dpi=dpi)
-
-        config = PDFHandler.read_config()
-        client = OpenAI(api_key=config['openai']['api_key'])
 
         all_chunks = []
         chapter_map = {}
@@ -216,7 +202,7 @@ class PDFHandler:
         # Process each image sequentially
         for page_num, image_path in enumerate(sorted(output_dir.glob("*.png"))):
             base64_image = PDFHandler.encode_image(image_path)
-            print(f"Transcribing {image_path}")
+            #print(f"Transcribing {image_path}")
 
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -246,7 +232,7 @@ class PDFHandler:
             with open(html_file_path, "w", encoding="utf-8") as html_file:
                 html_file.write(sanitized_html_content)
             
-            print(f"Saved HTML: {html_file_path}")
+            print(f"Saved HTML: {html_file_path.name}")
 
             # Add to all_chunks and chapter_map
             chunk_id = f'chunk-{page_num}'
@@ -256,17 +242,17 @@ class PDFHandler:
                 "pos": 0
             }
 
-        # Write all_chunks to all_chunks.json
-        pdftemp_dir = Path('./pdftemp')
-        pdftemp_dir.mkdir(exist_ok=True)
-        with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
-            json.dump(all_chunks, f, indent=4)
+        # # Write all_chunks to all_chunks.json
+        # pdftemp_dir = Path('./pdftemp')
+        # pdftemp_dir.mkdir(exist_ok=True)
+        # with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
+        #     json.dump(all_chunks, f, indent=4)
 
-        # Write chapter_map to chapter_map.json
-        with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
-            json.dump(chapter_map, f, indent=4)
+        # # Write chapter_map to chapter_map.json
+        # with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
+        #     json.dump(chapter_map, f, indent=4)
 
-        print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
+        # print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir.name}")
 
         return all_chunks, chapter_map
 

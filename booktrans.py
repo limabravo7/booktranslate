@@ -50,7 +50,7 @@ def cleanup_files(client, file_ids, temp_dir=None, keep_temp=False):
     keep_temp: If True, preserve the job directory
     """
     # First print the keep_temp status
-    print(f"Cleanup called with keep_temp={keep_temp} for job dir: {temp_dir} [cleanup_files]")
+    print(f"Cleanup called with keep_temp={keep_temp} for job dir: {temp_dir.name} [cleanup_files]")
     
     # Exit early if we should keep temp files
     if keep_temp:
@@ -59,7 +59,7 @@ def cleanup_files(client, file_ids, temp_dir=None, keep_temp=False):
 
     if not keep_temp and temp_dir and temp_dir.exists():
         try:
-            print(f"\nStarting cleanup of job directory: {temp_dir} [cleanup_files]")
+            print(f"\nStarting cleanup of job directory: {temp_dir.name} [cleanup_files]")
             
             # Force permissions on the directory and its contents
             chmod_recursive(temp_dir)
@@ -76,16 +76,16 @@ def cleanup_files(client, file_ids, temp_dir=None, keep_temp=False):
                                 pass
                         
                         item.unlink(missing_ok=True)
-                        print(f"Removed file: {item} [cleanup_files]")
+                        #print(f"Removed file: {item} [cleanup_files]")
                     except Exception as e:
                         print(f"Warning: Could not remove file {item}: {e} [cleanup_files]")
 
             # Finally try to remove the job directory itself
             try:
                 temp_dir.rmdir()
-                print(f"Removed job directory: {temp_dir} [cleanup_files]")
+                print(f"Removed job directory: {temp_dir.name} [cleanup_files]")
             except Exception as e:
-                print(f"Warning: Could not remove job directory {temp_dir}: {e} [cleanup_files]")
+                print(f"Warning: Could not remove job directory {temp_dir.name}: {e} [cleanup_files]")
                 
         except Exception as e:
             print(f"Warning: Error during cleanup: {e} [cleanup_files]")
@@ -360,9 +360,8 @@ def load_batch_state(temp_dir):
 def batch_translate_chunks(client, chunks, from_lang, to_lang, mode=None, model='gpt-4o-mini', 
                          test_translations=None, keep_temp=False, paths=None, chapter_map=None, filetype='epub'):
     """Handle translation of all chunks in a single batch"""
-    # Remove batchcheck handling from here since it's now in process_translations
     if mode == 'batchcheck':
-        return {}, None, None  # Let process_translations handle batchcheck mode
+        return {}, None, None
 
     # Extract input_epub_path from the job directory name
     if paths:
@@ -531,7 +530,6 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
         if status.status != "completed":
             print(f"Batch status: {status.status} [process_translations]")
             print(f"Progress: {status.request_counts.completed}/{status.request_counts.total} [process_translations]")
-            # Return status instead of exiting, so the main function can handle the messaging
             return {}, state['input_file_id'], status
             
         print("Batch completed! Retrieving results... [process_translations]")
@@ -556,7 +554,6 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
         save_translations(paths, translations)
         print(f"Total translations after merge: {len(translations)} [process_translations]")
         
-        # Remove state file cleanup from here since translate() will handle it
         return translations, state['input_file_id'], status
 
     # Ensure translations keys are strings
@@ -604,13 +601,13 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
                 print(f"Error translating chunk {chunk_id}: {e} [process_translations]")
                 raise
         print(f"Total translations after 'fast' mode: {len(translations)} [process_translations]")  # Added logging
-        return translations, None, None  # No cleanup needed in fast mode
+        return translations, None, None
     elif mode == 'batch':
         print(f"Translating {len(untranslated_chunks)} chunks in 'batch' mode [process_translations]")
         new_translations, input_file_id, status = batch_translate_chunks(
             client, untranslated_chunks, from_lang, to_lang, mode=mode, model=model,
             test_translations=test_translations, keep_temp=debug, paths=paths,
-            chapter_map=chapter_map, filetype=filetype  # Pass chapter_map to batch function
+            chapter_map=chapter_map, filetype=filetype
         )
         translations.update(new_translations)
         save_translations(paths, translations)
@@ -630,7 +627,7 @@ def process_translations(client, all_chunks, translations, mode, from_lang, to_l
         return translations, None, None
     else:
         print(f"Unknown mode: {mode} [process_translations]")
-        return translations, None, None  # Or handle appropriately
+        return translations, None, None
 
 def reassemble_translation(input_epub_path, output_epub_path, chapter_map, translations):
     """Reassemble the translated HTML files and create a new EPUB."""
@@ -638,7 +635,7 @@ def reassemble_translation(input_epub_path, output_epub_path, chapter_map, trans
     epub_handler.save_translated_epub(input_epub_path, output_epub_path, translations, chapter_map)
     print(f"Processed translation output saved to {output_epub_path} [reassemble_translation]")
 
-def check_batch_status(client, debug=False):  # Add debug parameter
+def check_batch_status(client, debug=False):
     """Check status of most recent batch job and return state if complete"""
     temp_dir = ensure_dir("temp")
     state_data = load_batch_state(temp_dir)
@@ -712,7 +709,6 @@ def save_partial_batch_results(client, temp_dir, batch_id, state_file_path, stat
         translations = {}
         # Process the downloaded content line by line
         for line in output_text.splitlines():
-            # Rest of processing remains the same
             if not line.strip():
                 continue
             try:
@@ -774,7 +770,7 @@ def select_resumable_job(input_epub_path, from_lang, to_lang, model, mode):
         choice = input("Start new translation job? (y/N): [select_resumable_job]")
         if choice.lower() != 'y':
             print("Aborting. [select_resumable_job]")
-            return None  # Return None instead of sys.exit()
+            return None
         return None
         
     print("\nFound resumable translation jobs: [select_resumable_job]")
@@ -787,7 +783,7 @@ def select_resumable_job(input_epub_path, from_lang, to_lang, model, mode):
         choice = input("\nEnter job number to resume (or 'q' to quit): [select_resumable_job]")
         if choice.lower() == 'q':
             print("Aborting. [select_resumable_job]")
-            return None  # Return None instead of sys.exit()
+            return None
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(resumable_jobs):
@@ -798,18 +794,17 @@ def select_resumable_job(input_epub_path, from_lang, to_lang, model, mode):
 
 def translate(client, input_path, output_path, from_lang='DE', to_lang='EN', 
               mode=None, model='gpt-4o-mini', fast=False, resume_job_id=None, 
-              debug=False, filetype='epub'):  # Add filetype parameter
+              debug=False, filetype='epub'):
     
     # Initialize success flag at the start
     success = False
     if filetype == 'epub':
         # Early check for batchcheck mode
         if mode == 'batchcheck':
-            state, state_file, status = check_batch_status(client, debug)  # Pass debug flag
+            state, state_file, status = check_batch_status(client, debug)
             if not state:
                 return
                 
-            # Set up minimal structure for processing results
             timestamp = state['timestamp']
             job_id = create_job_id(input_path, from_lang, to_lang, model, timestamp)
             paths = ensure_temp_structure(job_id)
@@ -861,12 +856,12 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         interrupted = False
         
         test_translations = None
-        if mode == 'test':  # Check mode instead of test_translations_file
+        if mode == 'test':
             test_translations = load_test_translations(input_path)
             if test_translations is None:
                 return
 
-        input_file_id = None  # Initialize variables
+        input_file_id = None
         status = None
         
         try:
@@ -959,7 +954,7 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
                 success = True
 
             except KeyboardInterrupt:
-                interrupted = True  # Set flag
+                interrupted = True
                 print("\nInterrupted by user. Progress is saved and can be resumed with --mode resume [translate]")
                 return
                     
@@ -968,7 +963,6 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
                 raise
 
         finally:
-            # Restore original interrupt handler
             signal.signal(signal.SIGINT, original_handler)
             
             # Skip cleanup if interrupted
@@ -980,7 +974,6 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
             
             # Perform cleanup if necessary
             if not DEBUG:
-                # Change: Use paths['job_dir'] instead of temp_dir
                 print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
                 # Only include OpenAI file IDs if they exist
                 file_ids = []
@@ -997,12 +990,11 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
                 if DEBUG:
                     print("Debug mode: Temporary files preserved in 'temp' directory [translate]")
             else:
-                # Change the condition to check for both batch modes
                 if mode in ['batchcheck', 'batch'] and status:
                     print(f"\nCurrent batch status: {status.status} [translate]")
                     if status.status == 'in_progress':
                         print("Batch processing is still in progress [translate]")
-                        print("Run again with --mode batchcheck to check status [translate]")
+                        print("Run again with --mode batchcheck to monitor progress [translate]")
                     else:
                         print("\nProcessing failed - temporary files preserved in 'temp' directory [translate]")
                 else:
@@ -1014,7 +1006,6 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         chapter_map = {}
         translations = {}
         temp_dir = ensure_dir("temp")
-        #mode = 'fast'
 
         timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
         job_id = create_job_id(input_path, from_lang, to_lang, model)
@@ -1104,9 +1095,9 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
 
         else:
             # Transcribe PDF to HTML
-            all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, paths, dpi=150, batch=False)
+            all_chunks, chapter_map = PDFHandler.transcribe_pdf(client, input_path, paths, dpi=150, batch=False)
             save_chunks(paths, all_chunks, chapter_map)
-            print("Transcription complete... [translate]")
+            print(f"Transcription of {len(all_chunks)} pages complete... [translate]")
 
             # Translate HTML chunks
             # translations, input_file_id, status = process_translations(
@@ -1120,7 +1111,7 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
 
         # Save final state before reassembly
         save_translations(paths, translations)
-        print(f"Translations saved: {paths['translations_file']} [translate]")
+        print(f"Translations saved: {paths['translations_file'].name} [translate]")
 
         if mode == 'pdfbilingual':
             PDFHandler.save_bilingual_pdf(input_path, translations, output_path)
@@ -1133,7 +1124,7 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
 
         keep_temp = DEBUG or not success
         if not DEBUG:
-            print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
+            #print(f"Cleaning up job directory: {paths['job_dir']} [translate]")
             # Only include OpenAI file IDs if they exist
             file_ids = []
             cleanup_files(client, file_ids, temp_dir=paths['job_dir'], keep_temp=keep_temp)
@@ -1178,12 +1169,6 @@ def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
             else:
                 print(f"Note: Directory {job_dir.name} has no translations.json yet [find_resumable_jobs]")
             
-            # Skip if no translations yet
-            # if chunks_completed == 0:
-            #     print(f"Skipping directory {job_dir.name}: no translations yet (0/{chunks_total} chunks) [find_resumable_jobs]")
-            #     continue
-            
-            # Note if job is complete
             if chunks_completed >= chunks_total:
                 print(f"Found completed job in {job_dir.name}: {chunks_completed}/{chunks_total} chunks [find_resumable_jobs]")
             else:
@@ -1201,7 +1186,7 @@ def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
             minute = time_part[2:4]
             second = time_part[4:6]
             
-            raw_timestamp = f"{date_part}_{time_part}"  # For sorting
+            raw_timestamp = f"{date_part}_{time_part}"
             padded_timestamp = f"{year}-{month}-{day}T{hour}:{minute}:{second}.000000+00:00"
             
             state = {
@@ -1233,7 +1218,6 @@ def main():
                                 '"resume" to continue previous job, "test" to use test translations, '
                                 '"batchcheck" to check batch status, "resumebatch" to resume with batch processing')
         parser.add_argument('--model', help='The model to use for translation (default: gpt-4o-mini)', default='gpt-4o-mini')
-        # Remove --inline-css argument
 
         args = parser.parse_args()
 
@@ -1253,7 +1237,7 @@ def main():
 
         # Check for resumable jobs if in resume mode
         job_id = None
-        if args.mode in ['resume', 'resumebatch']:  # Changed condition to catch both modes
+        if args.mode in ['resume', 'resumebatch']:
             print("\nLooking for resumable translation jobs... [main]")
             resumable_jobs = find_resumable_jobs(args.input, args.from_lang, args.to_lang, args.model)
             if resumable_jobs:
@@ -1281,7 +1265,7 @@ def main():
                     print("Invalid choice, please try again [main]")
             else:
                 print("\nNo resumable jobs found. [main]")
-                if args.mode == 'resumebatch':  # Add special handling for resumebatch
+                if args.mode == 'resumebatch':
                     print("Please run with --mode batch first to create a new batch job. [main]")
                     sys.exit(1)
                 choice = input("Start new translation job? (y/N): [main]")
@@ -1304,7 +1288,7 @@ def main():
         translate(client, args.input, output_path, args.from_lang, args.to_lang, 
                  mode=args.mode, model=args.model, 
                  fast=(args.mode not in ['batch']), resume_job_id=job_id, 
-                 debug=args.debug, filetype=filetype)  # Pass filetype to translate
+                 debug=args.debug, filetype=filetype)
     except KeyboardInterrupt:
         print("\nTranslation interrupted. Use --mode resume to continue later. [main]")
         sys.exit(1)
