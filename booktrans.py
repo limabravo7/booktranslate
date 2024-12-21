@@ -43,7 +43,7 @@ def chmod_recursive(path):
     except Exception as e:
         print(f"Warning: Failed to change permissions for {path}: {e} [chmod_recursive]")
 
-def cleanup_files(client, file_ids, temp_dir=None, keep_temp=True, keep_batch_files=False):
+def cleanup_files(client, file_ids, temp_dir=None, keep_temp=False):
     """Clean up temporary files and directories with error handling.
     temp_dir: Path to the specific job directory to clean up
     file_ids: List of OpenAI file IDs to delete
@@ -1002,14 +1002,15 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         translations = {}
         mode = 'fast'
 
+        timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
         job_id = create_job_id(input_path, from_lang, to_lang, model)
-        print(f"Starting new job: {job_id} [translate]")
         paths = ensure_temp_structure(job_id)
+        print(f"Starting new job: {job_id} [translate]")
         
         print("PDF detected, transcribing... [translate]")
 
         # Transcribe PDF to HTML
-        all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, dpi=150)
+        all_chunks, chapter_map = PDFHandler.transcribe_pdf(input_path, paths, dpi=150)
         save_chunks(paths, all_chunks, chapter_map)
         print("Transcription complete... [translate]")
 

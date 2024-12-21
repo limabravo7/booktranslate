@@ -12,9 +12,6 @@ class PDFHandler:
 
     @staticmethod
     def generate_page_images(pdf_path, output_dir, max_height=2000, dpi=150):
-        """
-        Generate PNG images of each page in the PDF and save them to the specified directory.
-        """
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True)
 
@@ -122,15 +119,15 @@ class PDFHandler:
         print(f"Bilingual PDF saved to {output_pdf_path}")
 
     @staticmethod
-    def transcribe_pdf(input_pdf_path, dpi=150):
+    def transcribe_pdf(input_pdf_path, paths, dpi=150):
         input_pdf_path = Path(input_pdf_path)
         if not input_pdf_path.exists():
             print(f"Error: Input file not found: {input_pdf_path}")
             return
 
         # Create output directory
-        output_dir = Path('./tempimg')
-        output_dir.mkdir(exist_ok=True)
+        output_dir = paths['job_dir']
+        #output_dir.mkdir(exist_ok=True)
 
         # Clear temporary image dir
         for png_file in output_dir.glob("*.png"):
