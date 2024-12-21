@@ -1,14 +1,14 @@
 # PDF and EPUB Book Translator using ChatGPT
 
 ## Overview
-A tool to translate PDF and EPUB books using OpenAI's ChatGPT. Can be used for large jobs (e.g., books) because it chunks them to stay under the token limit for each job. Supports batch processing, resuming jobs, and generating bilingual PDFs. You need a funded OpenAI account and API key.
+A tool to translate PDF and EPUB books using OpenAI's ChatGPT. Can be used for large documents (e.g., books) because it chunks them to stay under the token limit for each job. Supports batch processing, resuming jobs, and generating bilingual PDFs. You need a funded OpenAI account and API key.
 
 ## Features
 These are available from the command line:
 - Language settings
-- Processing modes for EPUB: regular mode processes translation sequentially; batch mode is half the cost but can take up to 24h (usually within an hour); you can change the model used (defaults to `gpt-4o-mini`)
-- Resume functionality for EPUB: both regular and batch mode jobs can be resumed if interrupted. A regular mode job can be resumed in batch mode, and vice versa.
-- Features for PDF: we turn PDF pages into images and use the OpenAI Vision API for OCR and translation in a single step. Unfortunately there is no batch API available. Also, we use `gpt-4o` because it is actually cheaper than `gpt-4o-mini` for images. We can however output a bilingual PDF with facing translation.
+- Processing modes for **EPUB**: regular mode processes translation sequentially; batch mode is half the cost but can take up to 24h (usually within an hour); you can change the model used (defaults to `gpt-4o-mini`)
+- Resume functionality for **EPUB**: both regular and batch mode jobs can be resumed if interrupted. A regular mode job can be resumed in batch mode, and vice versa.
+- Features for **PDF**: we turn PDF pages into images and use the OpenAI Vision API for OCR and translation in a single step. Unfortunately there is no batch API available. Also, we use `gpt-4o` because it is actually cheaper than `gpt-4o-mini` for images. We can however output a bilingual PDF with facing translation.
 
 Other features:
 - For EPUBs, you can supply your own prompt for the model in `customepubprompt.txt`. The default prompt is included in that file. You will probably want to tweak it if you're not translating texts on classical antiquity.
@@ -55,7 +55,7 @@ Also note the `customepubprompt.txt` and `custompdfprompt.txt` as mentioned unde
 ```sh
 python booktrans.py --input path/to/book.epub
 ```
-This is the minimal command, and uses these default options: sequential processing (not batch), from DE to EN, outputs as ./output/book_EN_gpt-4o-mini.epub.
+This is the minimal command, and uses these default options: sequential processing (not batch), from DE to EN, using the gpt-4o-mini model, outputs as `./output/book_EN_gpt-4o-mini.epub`.
 
 ```sh
 python booktrans.py --input path/to/book.epub --output path/to/output.epub --from-lang DE --to-lang EN --model gpt-4o
@@ -75,7 +75,7 @@ After you've started a batch job, use this to check on its status. It will retur
 ```sh
 python booktrans.py --input path/to/book.epub --mode resume
 ```
-If a run is incomplete for any reason (e.g., a batch was partially finished, or you manually exited a sequential run), the completed parts are saved in the temp dir and can be resumed. The above commands lists resumable jobs in the ./temp dir, and you can choose one to continue, using sequential (not batch) processing to finish the untranslated chunks. If you want to use batch processing to finish translation, use `--mode resumebatch`.
+If a run is incomplete for any reason (e.g., a batch was partially finished, or you manually exited a sequential run), the completed parts are saved in the `./temp` dir and can be resumed. The above commands lists resumable jobs and you can choose one to continue, using sequential (not batch) processing to finish the untranslated chunks. If you want to use batch processing to finish translation, use `--mode resumebatch`.
 
 ### For PDFs
 ```sh
@@ -93,5 +93,4 @@ These are all the options for PDFs. Only `--input path/to/book.pdf` is required.
 - `--model`: The model to use for translation (default: gpt-4o-mini)
 
 ## License
-This project is licensed under the GNU General Public License v3.0. See the [LICENSE.md](LICENSE) file for details.
-
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE.md) file for details.
