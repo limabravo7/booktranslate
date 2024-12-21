@@ -6,6 +6,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 from openai import OpenAI
 import re
+import subprocess  # Add this import for running Ghostscript
 
 class PDFHandler:
     """Handler for PDF file processing"""
@@ -71,9 +72,32 @@ class PDFHandler:
         return PDFHandler.remove_line_height_styles(sanitized_content)
 
     @staticmethod
+    def compress_pdf(input_pdf_path, output_pdf_path):
+        """Compress PDF using Ghostscript with font consolidation"""
+        try:
+            subprocess.run([
+                'gs',
+                '-sDEVICE=pdfwrite',
+                '-dCompatibilityLevel=1.4',
+                '-dPDFSETTINGS=/screen',
+                '-dSubsetFonts=true',
+                '-dEmbedAllFonts=true',
+                '-dCompressFonts=true',
+                '-dNOPAUSE',
+                '-dQUIET',
+                '-dBATCH',
+                f'-sOutputFile={output_pdf_path}',
+                input_pdf_path
+            ], check=True)
+            print(f"Compressed PDF saved to {output_pdf_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error compressing PDF: {e}")
+
+    @staticmethod
     def save_translated_pdf(translations, output_pdf_path):
         """Write a new PDF document from HTML pages"""
         output_pdf_path = Path(output_pdf_path)  # Ensure it's a Path object
+        temp_pdf_path = output_pdf_path.with_suffix('.temp.pdf')  # Temporary file for uncompressed PDF
         output_pdf_path.parent.mkdir(exist_ok=True)
         doc = fitz.open()
         page_width = 6.5 * 72  # inches to points
@@ -85,14 +109,20 @@ class PDFHandler:
             page = doc.new_page(width=page_width, height=page_height)
             # Insert HTML content into the page with a bounding box
             page.insert_htmlbox(fitz.Rect(margin, margin, page_width - margin, page_height - margin), html_content)
-        doc.save(output_pdf_path)
-        print(f"PDF saved to {output_pdf_path}")
+        
+        # Save the uncompressed PDF to a temporary file
+        doc.save(temp_pdf_path)
+        print(f"Uncompressed PDF saved to {temp_pdf_path}")
+
+        # Compress the PDF using Ghostscript
+        PDFHandler.compress_pdf(temp_pdf_path, output_pdf_path)
 
     @staticmethod
     def save_bilingual_pdf(original_pdf_path, translations, output_pdf_path):
         """Write a new PDF document alternating between original and translated pages."""
-        original_pdf_path = Path(original_pdf_path)
         output_pdf_path = Path(output_pdf_path)  # Ensure it's a Path object
+        temp_pdf_path = output_pdf_path.with_suffix('.temp.pdf')  # Temporary file for uncompressed PDF
+        original_pdf_path = Path(original_pdf_path)
         output_pdf_path.parent.mkdir(exist_ok=True)
         doc = fitz.open()
         page_width = 6.5 * 72  # inches to points
@@ -115,8 +145,12 @@ class PDFHandler:
                 # Insert HTML content into the page with a bounding box
                 page.insert_htmlbox(fitz.Rect(margin, margin, page_width - margin, page_height - margin), html_content)
 
-        doc.save(output_pdf_path)
-        print(f"Bilingual PDF saved to {output_pdf_path}")
+        # Save the uncompressed PDF to a temporary file
+        doc.save(temp_pdf_path)
+        print(f"Uncompressed PDF saved to {temp_pdf_path}")
+
+        # Compress the PDF using Ghostscript
+        PDFHandler.compress_pdf(temp_pdf_path, output_pdf_path)
 
     @staticmethod
     def transcribe_pdf(input_pdf_path, paths, dpi=150):
@@ -155,7 +189,8 @@ class PDFHandler:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "You are performing optical character recognition (OCR). Extract ALL the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Pay special attention to indentation, centred text, PARAGRAPHS (do not break up paragraphs into individual lines), ITALICS and SUPERSCRIPT formatting.  If the image contains polytonic GREEK text, recognise them letter-by-letter and do not try to make sense of the words. CRITICAL: If the image contains text that looks like footnotes (lines/paragraphs of smaller text, found below normal sized text, often preceded by a number), make the footnotes use smaller font in your HTML. In your HTML, use 'font-family: serif'; do not use tables or line-height or any heading tags (e.g. <h1>). Use BOLD to indicate titles. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                # "text": "You are performing optical character recognition (OCR). Extract ALL the text from this image and produce an HTML document with formatting that reproduces the formatting of the input image. Pay special attention to indentation, centred text, PARAGRAPHS (do not break up paragraphs into individual lines), ITALICS and SUPERSCRIPT formatting.  If the image contains polytonic GREEK text, recognise them letter-by-letter and do not try to make sense of the words. CRITICAL: If the image contains text that looks like footnotes (lines/paragraphs of smaller text, found below normal sized text, often preceded by a number), make the footnotes use smaller font in your HTML. In your HTML, use 'font-family: serif' (but Palatino font for Greek); do not use tables or line-height or any heading tags (e.g. <h1>). Use BOLD to indicate titles. Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
+                                "text": "The image is a scan of a page from a German scholarly book on Greek and Roman antiquity. Most of the text is in German, but there are also quotations in Greek and Latin. Your task is to understand the text, translate into ENGLISH while leaving any Greek and Latin quotations untranslated, and format the translated text as a HTML document as it would be in a scholarly translation. Accuracy is key. Pay special attention to FOOTNOTES, which are found at the bottom of the page in SMALLER font. Use 'font-family: serif' for the main text and 'font-family: Palatino' for Greek text. Do not use tables or line-height or any heading tags (e.g. <h1>). Return ONLY the HTML content, beginning with <!DOCTYPE html> and ending with </html>.",
                             },
                             {
                                 "type": "image_url",
@@ -184,17 +219,17 @@ class PDFHandler:
                 "pos": 0
             }
 
-        # # Write all_chunks to all_chunks.json
-        # pdftemp_dir = Path('./pdftemp')
-        # pdftemp_dir.mkdir(exist_ok=True)
-        # with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
-        #     json.dump(all_chunks, f, indent=4)
+        # Write all_chunks to all_chunks.json
+        pdftemp_dir = Path('./pdftemp')
+        pdftemp_dir.mkdir(exist_ok=True)
+        with open(pdftemp_dir / 'all_chunks.json', 'w', encoding='utf-8') as f:
+            json.dump(all_chunks, f, indent=4)
 
-        # # Write chapter_map to chapter_map.json
-        # with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
-        #     json.dump(chapter_map, f, indent=4)
+        # Write chapter_map to chapter_map.json
+        with open(pdftemp_dir / 'chapter_map.json', 'w', encoding='utf-8') as f:
+            json.dump(chapter_map, f, indent=4)
 
-        # print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
+        print(f"Processing complete. HTML files and metadata saved to {pdftemp_dir}")
 
         return all_chunks, chapter_map
 

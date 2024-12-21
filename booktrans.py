@@ -230,11 +230,13 @@ def system_prompt(from_lang, to_lang, filetype):
     custom_epubprompt_path = Path("./customepubprompt.txt")
     custom_pdfprompt_path = Path("./custompdfprompt.txt")
     if (custom_prompt_path.exists()):
+        print(f"Using customprompt.txt [system_prompt]")
         with open(custom_prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
 
     if filetype == 'epub':
         if (custom_epubprompt_path.exists()):
+            print(f"Using customepubprompt.txt [system_prompt]")
             with open(custom_epubprompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
@@ -281,6 +283,7 @@ Do not touch [number].[number] or Od.[number] or Il.[number] e.g.: 5.59, 12.52, 
 """
     elif filetype == 'pdf':
         if (custom_pdfprompt_path.exists()):
+            print(f"Using custompdfprompt.txt [system_prompt]")
             with open(custom_pdfprompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
@@ -1025,12 +1028,14 @@ def translate(client, input_path, output_path, from_lang='DE', to_lang='EN',
         print("Transcription complete... [translate]")
 
         # Translate HTML chunks
-        translations, input_file_id, status = process_translations(
-                    client, all_chunks, translations, mode, from_lang, to_lang,
-                    paths, model=model, test_translations=None,
-                    debug=debug, chapter_map=chapter_map, filetype=filetype
-                )
-        print(f"Final translation count: {len(translations)} [translate]")
+        # translations, input_file_id, status = process_translations(
+        #             client, all_chunks, translations, mode, from_lang, to_lang,
+        #             paths, model=model, test_translations=None,
+        #             debug=debug, chapter_map=chapter_map, filetype=filetype
+        #         )
+        # print(f"Final translation count: {len(translations)} [translate]")
+
+        translations = {chunk_id: chunk for chunk_id, chunk in all_chunks}
 
         # Save final state before reassembly
         save_translations(paths, translations)
@@ -1097,9 +1102,9 @@ def find_resumable_jobs(input_epub_path, from_lang, to_lang, model):
                 print(f"Note: Directory {job_dir.name} has no translations.json yet [find_resumable_jobs]")
             
             # Skip if no translations yet
-            if chunks_completed == 0:
-                print(f"Skipping directory {job_dir.name}: no translations yet (0/{chunks_total} chunks) [find_resumable_jobs]")
-                continue
+            # if chunks_completed == 0:
+            #     print(f"Skipping directory {job_dir.name}: no translations yet (0/{chunks_total} chunks) [find_resumable_jobs]")
+            #     continue
             
             # Note if job is complete
             if chunks_completed >= chunks_total:
