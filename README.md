@@ -3,7 +3,7 @@
 ## Overview
 A tool to translate PDF and EPUB books using OpenAI's ChatGPT. Can be used for large documents (e.g., books) because it chunks them to stay under the token limit for each job. Supports batch processing, resuming jobs, and generating bilingual PDFs. You need a funded OpenAI account and API key.
 
-This was inspired by and initially based on [jb41/translate-book](https://github.com/jb41/translate-book) and [KeinNiemand's fork](https://github.com/KeinNiemand/translate-book/).
+This was inspired by and initially based on [jb41/translate-book](https://github.com/jb41/translate-book) and [KeinNiemand's fork](https://github.com/KeinNiemand/translate-book/). Created with a *lot* of help from Github Copilot.
 
 ## Features
 These are available from the command line:
