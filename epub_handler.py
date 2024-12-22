@@ -1,6 +1,6 @@
 import zipfile
 from io import BytesIO
-from html_processor import split_html_by_paragraph  # Use absolute import
+from html_processor import split_html_by_paragraph
 
 class EPUBHandler:
     """Handler for EPUB file processing"""
