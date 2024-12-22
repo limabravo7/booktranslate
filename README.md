@@ -3,12 +3,15 @@
 ## Overview
 A tool to translate PDF and EPUB books using OpenAI's ChatGPT. Can be used for large documents (e.g., books) because it chunks them to stay under the token limit for each job. Supports batch processing, resuming jobs, and generating bilingual PDFs. You need a funded OpenAI account and API key.
 
+This was inspired by and initially based on [jb41/translate-book](https://github.com/jb41/translate-book) and [KeinNiemand's fork](https://github.com/KeinNiemand/translate-book/).
+
 ## Features
 These are available from the command line:
 - Language settings
 - Processing modes for **EPUB**: regular mode processes translation sequentially; batch mode is half the cost but can take up to 24h (usually within an hour); you can change the model used (defaults to `gpt-4o-mini`)
 - Resume functionality for **EPUB**: both regular and batch mode jobs can be resumed if interrupted. A regular mode job can be resumed in batch mode, and vice versa.
 - Features for **PDF**: we turn PDF pages into images and use the OpenAI Vision API for OCR and translation in a single step. Unfortunately there is no batch API available. Also, we use `gpt-4o` because it is actually cheaper than `gpt-4o-mini` for images. We can however output a bilingual PDF with facing translation.
+- **NOTE**: PDF prompts are inconsistent for me. About 10% of the time it only does OCR and refuses to translate. This might not be an issue with less complicated prompts. I recommend running PDF jobs with the `--debug` flag to save temp files. If you encounter untranslated pages, create text files `fixpdfpages.txt` (list of page numbers that need to be fixed) and `fixpdfprompt.txt` inside the job's temp dir, then run `python fixpdf.py --fixjobpath ./temp/[jobdir] --fixinput path/to/pdf-to-be-fixed.pdf`. It will take each corresponding `page_0000.html` and translate it using the prompt in `fixpdfprompt.txt`, and then replace the corresponding page in `pdf-to-be-fixed.pdf` with the new translations. Some pages `gpt-4o-mini` simply refuses to translate. You can try using `gpt-4o` with the `--model` argument.
 
 Other features:
 - For EPUBs, you can supply your own prompt for the model in `customepubprompt.txt`. The default prompt is included in that file. You will probably want to tweak it if you're not translating texts on classical antiquity.
