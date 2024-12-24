@@ -240,46 +240,10 @@ def system_prompt(from_lang, to_lang, filetype):
             with open(custom_epubprompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
-            return f"""You are a {from_lang}-to-{to_lang} translator for scholarly books.
-
-CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
-- Never remove or modify HTML/XML tags
-- Keep ALL class names and IDs unchanged
-- Preserve ALL style attributes completely 
-- Maintain ALL paragraph (<p>) and div tags with their full attributes
-- Copy opening and closing tags exactly as they appear
-- Do not merge or split HTML/XML elements
-- Do not add new HTML/XML formatting
-
-Translate ONLY and ALL text that is in {from_lang}.
-Leave in place WITHOUT translating or modifying in any way:
-- Greek/Latin words or text, including block quotations
-- HTML/XML attributes and values
-
-Bad example:
-Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
-Output: The text...
-
-Good example:
-Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
-Output: <p class="block_36" style="font-size: 1.33333em">The text...</p>
-
-As a SECOND step: find numbers which are part of the CONTENT and not part of HTML code. If the number DIRECTLY follows text (letters not numerals) or the punctuation marks .,!?"' without a space, then enclose the number in superscript (<sup></sup>) tags, WITHOUT adding a space before the opening <sup> tag.
-
-Good examples:
-Input: Elysian traits seen.10 
-Output: Elysian traits seen.<sup>10</sup>
-
-Input: disinterest in it.7</p>
-Output: disinterest in it.<sup>7</sup></p>
-
-Input: joy to man.5 
-Output: joy to man.<sup>5</sup>
-
-Input: incessantly (82-84).6
-Output: incessantly (82-84).<sup>6</sup>
-
-Do not touch [number].[number] or Od.[number] or Il.[number] e.g.: 5.59, 12.52, Od.5, Il.12
+            return f"""You are an academic translator, translating to {to_lang}.
+CRITICAL: You must preserve ALL HTML/XML structure exactly as provided.
+You don't need to translate quotations in Greek or Latin.
+If you find numbers which look like footnote markers, and make them superscript.
 """
     elif filetype == 'pdf':
         if (custom_pdfprompt_path.exists()):
@@ -287,29 +251,9 @@ Do not touch [number].[number] or Od.[number] or Il.[number] e.g.: 5.59, 12.52, 
             with open(custom_pdfprompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
-            return f"""You are a {from_lang}-to-{to_lang} translator for scholarly books.
-
-CRITICAL: You must preserve ALL HTML/XML structure exactly as provided:
-- Never remove or modify HTML/XML tags
-- Keep ALL class names and IDs unchanged
-- Preserve ALL style attributes completely 
-- Maintain ALL paragraph (<p>) and div tags with their full attributes
-- Copy opening and closing tags exactly as they appear
-- Do not merge or split HTML/XML elements
-- Do not add new HTML/XML formatting
-
-Translate ONLY and ALL text that is in {from_lang}.
-Leave in place WITHOUT translating or modifying in any way:
-- Greek/Latin words or text, including block quotations
-- HTML/XML attributes and values
-
-Bad example:
-Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
-Output: The text...
-
-Good example:
-Input: <p class="block_36" style="font-size: 1.33333em">Der Text...</p>
-Output: <p class="block_36" style="font-size: 1.33333em">The text...</p>
+            return f"""You are an academic translator, translating to {to_lang}.
+CRITICAL: You must preserve ALL HTML/XML structure exactly as provided.
+You don't need to translate quotations in Greek or Latin.
 """
 
 def load_test_translations(test_file):
