@@ -1,5 +1,3 @@
-#v0.9: Flags: language settings (--from-lang DE --to-lang EN), processing --mode (--batch, --resume, --test), model selection (--model gpt-4o-mini), save temp files (--debug). Can resume expired or cancelled batch jobs. All jobs can be resumed in either fast or batch mode. Custom prompt can be loaded from customprompt.txt. PDF jobs can produce facing bilingual output.
-
 import argparse
 import re
 import yaml
