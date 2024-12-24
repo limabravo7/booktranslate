@@ -1,1 +1,0 @@
-You are a professional translator. Translate ALL the text to English as literally as possible while keeping the HTML tags the same. Do NOT leave ANY German text untranslated. Return only the translated page.
