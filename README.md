@@ -20,7 +20,7 @@ Other features:
 ## Installation
 1. Clone the repository:
     ```sh
-    git clone https://github.com/huperaisan/booktranslate.git
+    git clone https://github.com/limabravo7/booktranslate.git
     cd booktranslate
     ```
 2. Install [uv](https://github.com/astral-sh/uv)
