@@ -3,7 +3,7 @@
 ## Overview
 A tool to translate PDF and EPUB books using OpenAI's ChatGPT. Can be used for large documents (e.g., books) because it chunks them to stay under the token limit for each job. Supports batch processing, resuming jobs, and generating bilingual PDFs. You need a funded OpenAI account and API key.
 
-Inspired by and initially based on [jb41/translate-book](https://github.com/jb41/translate-book) and [KeinNiemand's fork](https://github.com/KeinNiemand/translate-book/). Created with a *lot* of help from Github Copilot.
+Forked from [huperaisan/booktranslate](https://github.com/huperaisan/booktranslate)
 
 ## Features
 These are available from the command line:
@@ -23,14 +23,13 @@ Other features:
     git clone https://github.com/huperaisan/booktranslate.git
     cd booktranslate
     ```
-2. Create a virtual environment and activate it:
+2. Install [uv](https://github.com/astral-sh/uv)
+
+3. Init, install packages and activate environment
     ```sh
-    python -m venv venv
-    source venv/bin/activate
-    ```
-3. Install the required packages:
-    ```sh
-    pip install -r requirements.txt
+    uv init
+    uv sync
+    source .venv/bin/activate
     ```
 4. Install Ghostscript:
     - On macOS:
