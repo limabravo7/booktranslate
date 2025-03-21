@@ -1,0 +1,12 @@
+[project]
+name = "booktranslate"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=6.29.5",
+    "openai>=1.0.0",
+    "pymupdf>=1.18.0",
+    "pyyaml>=6.0.1",
+]
